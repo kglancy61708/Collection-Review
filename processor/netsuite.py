@@ -72,8 +72,6 @@ SELECT
 FROM transaction t
 INNER JOIN customer c ON t.entity = c.id
 WHERE t.type = 'CustInvc'
-  AND t.status IN ('CustInvc:A', 'CustInvc:B')
-  AND t.void = 'F'
   AND t.foreignamountunpaid > 0
 ORDER BY c.entityid, t.trandate
 """
@@ -86,7 +84,6 @@ SELECT
 FROM transaction t
 INNER JOIN customer c ON t.entity = c.id
 WHERE t.type = 'CustCred'
-  AND t.void = 'F'
   AND t.foreignamountunpaid < 0
 ORDER BY c.entityid
 """
@@ -363,10 +360,9 @@ def pull_netsuite_data() -> tuple[list[dict], list[dict]]:
     credits  = _normalise_credit_rows(raw_credits)
 
     if not invoices:
-        raise RuntimeError(
-            "SuiteQL returned 0 invoice rows. This usually means a custom field ID "
-            "is incorrect or the Access Token role lacks SuiteQL / Transaction permissions. "
-            "Check F_COLLECTIONS_STATUS and related constants in processor/netsuite.py."
+        logger.warning(
+            "SuiteQL returned 0 invoice rows. Check role permissions and "
+            "custom field IDs (F_COLLECTIONS_STATUS etc.) in processor/netsuite.py."
         )
 
     return invoices, credits
