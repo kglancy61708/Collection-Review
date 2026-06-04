@@ -52,14 +52,19 @@ def pull():
 
     try:
         invoices, credits = pull_netsuite_data()
+        logger.info("pull_netsuite_data returned %d invoices, %d credits",
+                    len(invoices), len(credits))
         accounts = process_collections(invoices, credits, month, year)
+        logger.info("process_collections returned %d accounts", len(accounts))
+        preview = _build_preview(accounts, month, year)
+        logger.info("preview built OK: %s", preview)
+        return jsonify(preview)
     except RuntimeError as e:
+        logger.error("RuntimeError in pull: %s", e)
         return jsonify({"error": str(e)}), 400
     except Exception as e:
-        logger.exception("Unexpected error pulling from NetSuite")
-        return jsonify({"error": f"Unexpected error: {e}"}), 500
-
-    return jsonify(_build_preview(accounts, month, year))
+        logger.exception("Unexpected error in pull")
+        return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
 
 
 @app.route("/generate", methods=["POST"])

@@ -268,9 +268,11 @@ $('btn-pull').addEventListener('click', async () => {
     });
     let data;
     try { data = await resp.json(); }
-    catch { data = {error: `Server error (HTTP ${resp.status}) — check Railway logs for details.`}; }
+    catch { data = {error: `Server returned non-JSON (HTTP ${resp.status}) — check Railway logs.`}; }
     if (!resp.ok || data.error) {
-      showInlineError('ns-error', data.error || 'Unknown error during pull.');
+      showInlineError('ns-error',
+        (data.error || `HTTP ${resp.status} — no error detail`) +
+        (resp.ok ? '' : ` [HTTP ${resp.status}]`));
       return;
     }
     renderPreview(data);
