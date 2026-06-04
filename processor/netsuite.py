@@ -70,7 +70,7 @@ SELECT
 FROM transaction t
 INNER JOIN customer c ON t.entity = c.id
 WHERE t.type = 'CustInvc'
-  AND t.foreignamountunpaid > 0
+  AND COALESCE(t.foreignamountunpaid, 0) > 0
 ORDER BY c.entityid, t.trandate
 """
 
@@ -338,6 +338,35 @@ def check_credentials() -> bool:
         os.environ.get("NS_TOKEN_ID", ""),
         os.environ.get("NS_TOKEN_SECRET", ""),
     ])
+
+
+def diagnose() -> dict:
+    """
+    Run diagnostic SuiteQL queries to help identify why invoices return 0 rows.
+    Returns a dict with counts and sample data for review in Railway logs.
+    """
+    results = {}
+
+    tests = [
+        ("total_transactions",   "SELECT COUNT(*) AS cnt FROM transaction"),
+        ("invoice_types",        "SELECT type, COUNT(*) AS cnt FROM transaction GROUP BY type ORDER BY cnt DESC"),
+        ("custinvc_count",       "SELECT COUNT(*) AS cnt FROM transaction WHERE type = 'CustInvc'"),
+        ("custinvc_any_amount",  "SELECT COUNT(*) AS cnt FROM transaction WHERE type = 'CustInvc' AND COALESCE(foreignamountunpaid, 0) > 0"),
+        ("custcred_count",       "SELECT COUNT(*) AS cnt FROM transaction WHERE type = 'CustCred'"),
+        ("customer_count",       "SELECT COUNT(*) AS cnt FROM customer"),
+    ]
+
+    for label, query in tests:
+        try:
+            data = _suiteql_request(query, offset=0)
+            items = data.get("items", [])
+            results[label] = items
+            logger.info("DIAG %s: %s", label, items)
+        except Exception as e:
+            results[label] = {"error": str(e)}
+            logger.error("DIAG %s FAILED: %s", label, e)
+
+    return results
 
 
 def pull_netsuite_data() -> tuple[list[dict], list[dict]]:

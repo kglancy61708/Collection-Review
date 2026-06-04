@@ -43,6 +43,18 @@ def health():
     return jsonify({"status": "ok", "ns_configured": check_credentials()})
 
 
+@app.route("/diagnose")
+def diagnose():
+    """Run diagnostic SuiteQL queries — check Railway logs for results."""
+    from processor.netsuite import diagnose as _diag
+    try:
+        results = _diag()
+        return jsonify({"status": "ok", "results": results})
+    except Exception as e:
+        logger.exception("Diagnose failed")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/pull", methods=["POST"])
 def pull():
     """Pull from NetSuite via TBA, return JSON preview."""
