@@ -61,7 +61,7 @@ INVOICE_QUERY = f"""
 SELECT
   c.altname || ' : ' || c.entityid          AS "Collect As",
   TO_CHAR(t.trandate, 'MM/DD/YYYY')          AS "Date",
-  t.amountremaining                           AS "Amount Remaining",
+  t.foreignamountunpaid                       AS "Amount Remaining",
   BUILTIN.DF(t.subsidiary)                   AS "Business Unit",
   BUILTIN.DF(t.class)                        AS "Category",
   t.{F_COLLECTIONS_STATUS}                   AS "Collections Status",
@@ -74,21 +74,21 @@ INNER JOIN customer c ON t.entity = c.id
 WHERE t.type = 'CustInvc'
   AND t.status = 'open'
   AND t.void = 'F'
-  AND t.amountremaining > 0
+  AND t.foreignamountunpaid > 0
 ORDER BY c.entityid, t.trandate
 """
 
 CREDIT_QUERY = f"""
 SELECT
-  c.altname || ' : ' || c.entityid  AS "Collect As",
-  t.amountremaining                   AS "Amount Remaining",
+  c.altname || ' : ' || c.entityid   AS "Collect As",
+  t.foreignamountunpaid               AS "Amount Remaining",
   BUILTIN.DF(t.customform)            AS "Custom Form"
 FROM transaction t
 INNER JOIN customer c ON t.entity = c.id
 WHERE t.type = 'CustCred'
   AND t.status = 'open'
   AND t.void = 'F'
-  AND t.amountremaining < 0
+  AND t.foreignamountunpaid < 0
 ORDER BY c.entityid
 """
 
