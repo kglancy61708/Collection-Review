@@ -394,8 +394,8 @@ def _compute_future_restriction(account: AccountSummary) -> str:
     is_long_leash = escalation == "long leash"
     is_regular = escalation in ("regular", "normal", "")
 
-    if account.credit_adjustment:
-        return ""  # Cleared
+    if account.credit_adjustment and account.total_aged_balance <= 0.01:
+        return ""  # Cleared — credits eliminated all aged balance
 
     oldest = account.oldest_bucket_with_balance
     aged_buckets_set = set(AGED_BUCKETS)
