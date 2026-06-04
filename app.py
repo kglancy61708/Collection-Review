@@ -22,6 +22,13 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB upload limit
 
 
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Return JSON for all unhandled exceptions so the frontend never gets HTML."""
+    logger.exception("Unhandled exception: %s", e)
+    return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------

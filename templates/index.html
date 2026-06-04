@@ -266,7 +266,9 @@ $('btn-pull').addEventListener('click', async () => {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({month, year}),
     });
-    const data = await resp.json();
+    let data;
+    try { data = await resp.json(); }
+    catch { data = {error: `Server error (HTTP ${resp.status}) — check Railway logs for details.`}; }
     if (!resp.ok || data.error) {
       showInlineError('ns-error', data.error || 'Unknown error during pull.');
       return;
