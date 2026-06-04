@@ -27,17 +27,17 @@
 <div class="container" style="max-width: 860px;">
 
   <!-- Error Alert -->
-  <div class="alert alert-danger alert-dismissible fade show" id="error-alert" role="alert">
+  <div class="alert alert-danger alert-dismissible" id="error-alert" role="alert" style="display:none;">
     <i class="bi bi-exclamation-triangle-fill me-2"></i>
     <span id="error-message"></span>
-    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    <button type="button" class="btn-close" data-bs-dismiss="alert" onclick="document.getElementById('error-alert').style.display='none'"></button>
   </div>
 
   <!-- Success Alert -->
-  <div class="alert alert-success alert-dismissible fade show" id="success-alert" role="alert">
+  <div class="alert alert-success alert-dismissible" id="success-alert" role="alert" style="display:none;">
     <i class="bi bi-check-circle-fill me-2"></i>
     <span id="success-message">Report downloaded successfully.</span>
-    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    <button type="button" class="btn-close" data-bs-dismiss="alert" onclick="document.getElementById('success-alert').style.display='none'"></button>
   </div>
 
   <!-- Step 1: Month / Year -->
@@ -66,8 +66,7 @@
         </div>
         <div class="col-sm-3">
           <label class="form-label fw-semibold" for="report-year">Year</label>
-          <select class="form-select" id="report-year">
-          </select>
+          <select class="form-select" id="report-year"></select>
         </div>
         <div class="col-sm-5">
           <div class="alert alert-info mb-0 py-2 px-3" style="font-size:0.85rem;">
@@ -87,24 +86,60 @@
     <div class="card-body">
       <ul class="nav nav-tabs mb-3" id="sourceTabs">
         <li class="nav-item">
-          <button class="nav-link active" id="ns-tab" data-bs-toggle="tab" data-bs-target="#ns-pane" type="button">
-            <i class="bi bi-cloud-download me-1"></i> Pull from NetSuite
+          <button class="nav-link active" id="upload-tab" data-bs-toggle="tab" data-bs-target="#upload-pane" type="button">
+            <i class="bi bi-upload me-1"></i> Upload Files
           </button>
         </li>
         <li class="nav-item">
-          <button class="nav-link" id="upload-tab" data-bs-toggle="tab" data-bs-target="#upload-pane" type="button">
-            <i class="bi bi-upload me-1"></i> Upload Files
+          <button class="nav-link" id="ns-tab" data-bs-toggle="tab" data-bs-target="#ns-pane" type="button">
+            <i class="bi bi-cloud-download me-1"></i> Pull from NetSuite
           </button>
         </li>
       </ul>
 
       <div class="tab-content">
+
+        <!-- Upload tab (PRIMARY) -->
+        <div class="tab-pane fade show active" id="upload-pane">
+          <div class="alert alert-info py-2 mb-3" style="font-size:0.875rem;">
+            <i class="bi bi-info-circle me-1"></i>
+            In NetSuite, export <strong>Saved Search 7474</strong> (Open Invoices) and <strong>Saved Search 6011</strong> (Open Credits) as XLS or CSV, then upload both below.
+          </div>
+          <div class="row g-3">
+            <div class="col-sm-6">
+              <label class="form-label fw-semibold" for="invoice-file">
+                Open Invoices Export <span class="text-muted">(XLS / CSV)</span>
+              </label>
+              <input class="form-control" type="file" id="invoice-file" accept=".xls,.xml,.csv">
+              <div class="form-text">Saved search 7474 — All Open Invoices</div>
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label fw-semibold" for="credits-file">
+                Open Credits Export <span class="text-muted">(XLS / CSV)</span>
+              </label>
+              <input class="form-control" type="file" id="credits-file" accept=".xls,.xml,.csv">
+              <div class="form-text">Saved search 6011 — Open Credits &amp; Payments</div>
+            </div>
+            <div class="col-12">
+              <button class="btn btn-success px-4" id="btn-generate-upload">
+                <i class="bi bi-file-earmark-excel me-1"></i> Generate Report
+              </button>
+            </div>
+          </div>
+          <!-- Upload inline error -->
+          <div id="upload-error" class="alert alert-danger mt-3" style="display:none;"></div>
+        </div>
+
         <!-- NetSuite tab -->
-        <div class="tab-pane fade show active" id="ns-pane">
+        <div class="tab-pane fade" id="ns-pane">
+          <div class="alert alert-warning py-2 mb-3" style="font-size:0.875rem;">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            <strong>Note:</strong> Direct NetSuite pull requires standard username/password login (no SSO or multi-factor auth). If your account uses SSO or MFA, use the <strong>Upload Files</strong> tab instead.
+          </div>
           <div class="row g-3">
             <div class="col-sm-4">
               <label class="form-label fw-semibold" for="ns-account">Account ID</label>
-              <input type="text" class="form-control" id="ns-account" placeholder="e.g. 3412280" autocomplete="off">
+              <input type="text" class="form-control" id="ns-account" placeholder="e.g. 3412280" autocomplete="off" value="3412280">
               <div class="form-text">Your NetSuite account number</div>
             </div>
             <div class="col-sm-4">
@@ -124,45 +159,23 @@
               <button class="btn btn-primary px-4" id="btn-pull">
                 <i class="bi bi-cloud-arrow-down me-1"></i> Pull &amp; Preview
               </button>
-              <button class="btn btn-success px-4" id="btn-generate-ns" disabled>
+              <button class="btn btn-success px-4" id="btn-generate-ns">
                 <i class="bi bi-file-earmark-excel me-1"></i> Generate Report
               </button>
             </div>
           </div>
+          <!-- NS inline error -->
+          <div id="ns-error" class="alert alert-danger mt-3" style="display:none;"></div>
         </div>
 
-        <!-- Upload tab -->
-        <div class="tab-pane fade" id="upload-pane">
-          <div class="row g-3">
-            <div class="col-sm-6">
-              <label class="form-label fw-semibold" for="invoice-file">
-                Open Invoices Export <span class="text-muted">(XLS / CSV)</span>
-              </label>
-              <input class="form-control" type="file" id="invoice-file" accept=".xls,.xml,.csv">
-              <div class="form-text">Saved search 7474 export</div>
-            </div>
-            <div class="col-sm-6">
-              <label class="form-label fw-semibold" for="credits-file">
-                Open Credits Export <span class="text-muted">(XLS / CSV)</span>
-              </label>
-              <input class="form-control" type="file" id="credits-file" accept=".xls,.xml,.csv">
-              <div class="form-text">Saved search 6011 export</div>
-            </div>
-            <div class="col-12">
-              <button class="btn btn-success px-4" id="btn-generate-upload">
-                <i class="bi bi-file-earmark-excel me-1"></i> Generate Report
-              </button>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   </div>
 
-  <!-- Step 3: Preview (shown after pull) -->
-  <div class="card step-card" id="preview-card">
+  <!-- Step 3: Preview (shown after successful NS pull) -->
+  <div class="card step-card" id="preview-card" style="display:none;">
     <div class="card-header">
-      <span class="step-badge">3</span> Preview &amp; Generate
+      <span class="step-badge">3</span> Preview
     </div>
     <div class="card-body">
       <div class="row g-3 mb-3">
@@ -185,11 +198,7 @@
           </div>
         </div>
       </div>
-
-      <!-- Status breakdown -->
       <div class="mb-3" id="status-breakdown"></div>
-
-      <!-- Errors -->
       <div id="preview-errors"></div>
     </div>
   </div>
@@ -223,10 +232,15 @@ function showSuccess(msg) {
   $('success-message').textContent = msg || 'Report downloaded successfully.';
   $('success-alert').style.display = '';
   $('error-alert').style.display = 'none';
+  window.scrollTo({top: 0, behavior: 'smooth'});
 }
-function hideAlerts() {
-  $('error-alert').style.display = 'none';
-  $('success-alert').style.display = 'none';
+function showInlineError(elId, msg) {
+  const el = $(elId);
+  el.textContent = msg;
+  el.style.display = '';
+}
+function hideInlineError(elId) {
+  $(elId).style.display = 'none';
 }
 
 // ---------------------------------------------------------------------------
@@ -269,7 +283,7 @@ let lastPullData = null;
 // Pull & Preview
 // ---------------------------------------------------------------------------
 $('btn-pull').addEventListener('click', async () => {
-  hideAlerts();
+  hideInlineError('ns-error');
   const account_id = $('ns-account').value.trim();
   const email = $('ns-email').value.trim();
   const password = $('ns-password').value;
@@ -277,7 +291,7 @@ $('btn-pull').addEventListener('click', async () => {
   const year = parseInt($('report-year').value);
 
   if (!account_id || !email || !password) {
-    showError('Please enter your NetSuite Account ID, email, and password.');
+    showInlineError('ns-error', 'Please enter your NetSuite Account ID, email, and password.');
     return;
   }
 
@@ -290,41 +304,52 @@ $('btn-pull').addEventListener('click', async () => {
     });
     const data = await resp.json();
     if (!resp.ok || data.error) {
-      showError(data.error || 'Unknown error during pull.');
+      showInlineError('ns-error', (data.error || 'Unknown error during pull.') +
+        ' — If this keeps failing, use the Upload Files tab instead.');
       return;
     }
     lastPullData = {account_id, email, password, month, year};
     renderPreview(data);
-    $('btn-generate-ns').disabled = false;
   } catch (e) {
-    showError('Network error: ' + e.message);
+    showInlineError('ns-error', 'Network error: ' + e.message);
   } finally {
     hideLoading();
   }
 });
 
 // ---------------------------------------------------------------------------
-// Generate from NetSuite (after preview)
+// Generate from NetSuite
 // ---------------------------------------------------------------------------
 $('btn-generate-ns').addEventListener('click', async () => {
-  if (!lastPullData) return;
-  hideAlerts();
-  showLoading('Generating Excel report…');
+  hideInlineError('ns-error');
+  const account_id = $('ns-account').value.trim();
+  const email = $('ns-email').value.trim();
+  const password = $('ns-password').value;
+  const month = parseInt($('report-month').value);
+  const year = parseInt($('report-year').value);
+
+  if (!account_id || !email || !password) {
+    showInlineError('ns-error', 'Please enter your NetSuite Account ID, email, and password.');
+    return;
+  }
+
+  showLoading('Pulling from NetSuite and generating report…');
   try {
     const resp = await fetch('/generate', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(lastPullData),
+      body: JSON.stringify({account_id, email, password, month, year}),
     });
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}));
-      showError(data.error || 'Failed to generate report.');
+      showInlineError('ns-error', (data.error || 'Failed to generate report.') +
+        ' — If this keeps failing, use the Upload Files tab instead.');
       return;
     }
     await downloadBlob(resp);
     showSuccess('Report generated and downloaded successfully.');
   } catch (e) {
-    showError('Network error: ' + e.message);
+    showInlineError('ns-error', 'Network error: ' + e.message);
   } finally {
     hideLoading();
   }
@@ -334,14 +359,14 @@ $('btn-generate-ns').addEventListener('click', async () => {
 // Generate from Upload
 // ---------------------------------------------------------------------------
 $('btn-generate-upload').addEventListener('click', async () => {
-  hideAlerts();
+  hideInlineError('upload-error');
   const invoiceFile = $('invoice-file').files[0];
   const creditsFile = $('credits-file').files[0];
   const month = $('report-month').value;
   const year = $('report-year').value;
 
   if (!invoiceFile || !creditsFile) {
-    showError('Please select both the invoice export file and the credits export file.');
+    showInlineError('upload-error', 'Please select both the invoice export file and the credits export file.');
     return;
   }
 
@@ -359,13 +384,13 @@ $('btn-generate-upload').addEventListener('click', async () => {
     });
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}));
-      showError(data.error || 'Failed to generate report.');
+      showInlineError('upload-error', data.error || 'Failed to generate report.');
       return;
     }
     await downloadBlob(resp);
     showSuccess('Report generated and downloaded successfully.');
   } catch (e) {
-    showError('Network error: ' + e.message);
+    showInlineError('upload-error', 'Network error: ' + e.message);
   } finally {
     hideLoading();
   }
@@ -377,8 +402,8 @@ $('btn-generate-upload').addEventListener('click', async () => {
 async function downloadBlob(resp) {
   const blob = await resp.blob();
   const cd = resp.headers.get('Content-Disposition') || '';
-  const match = cd.match(/filename="?([^"]+)"?/);
-  const filename = match ? match[1] : 'Collections_Review.xlsx';
+  const match = cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+  const filename = match ? match[1].replace(/['"]/g, '') : 'Collections_Review.xlsx';
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -392,19 +417,18 @@ async function downloadBlob(resp) {
 // Render preview
 // ---------------------------------------------------------------------------
 const STATUS_CSS = {
-  'Cancel NP': 'status-cancel-np',
-  'Predemand Letter': 'status-predemand',
-  'Collection Letter': 'status-collection-letter',
-  'Call Customer': 'status-call-customer',
+  'Cancel NP':             'status-cancel-np',
+  'Predemand Letter':      'status-predemand',
+  'Collection Letter':     'status-collection-letter',
+  'Call Customer':         'status-call-customer',
   'Friendly Reminder Email': 'status-fre',
-  'Skipped Invoice': 'status-skipped',
+  'Skipped Invoice':       'status-skipped',
   'Special Circumstances': 'status-special',
-  'No Action': 'status-no-action',
+  'No Action':             'status-no-action',
 };
-
 const STATUS_ORDER = [
-  'Cancel NP', 'Predemand Letter', 'Collection Letter', 'Call Customer',
-  'Friendly Reminder Email', 'Skipped Invoice', 'Special Circumstances', 'No Action',
+  'Cancel NP','Predemand Letter','Collection Letter','Call Customer',
+  'Friendly Reminder Email','Skipped Invoice','Special Circumstances','No Action',
 ];
 
 function renderPreview(data) {
@@ -413,7 +437,6 @@ function renderPreview(data) {
   $('preview-current-only').textContent =
     (data.section_counts.current_only || 0) + ' / ' + (data.section_counts.autopay || 0);
 
-  // Status breakdown
   const breakdown = $('status-breakdown');
   breakdown.innerHTML = '';
   const counts = data.status_counts || {};
@@ -430,7 +453,6 @@ function renderPreview(data) {
     breakdown.appendChild(wrap);
   }
 
-  // Errors
   const errDiv = $('preview-errors');
   errDiv.innerHTML = '';
   if (data.errors && data.errors.length) {
