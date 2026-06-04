@@ -212,12 +212,16 @@ def _suiteql_request(query: str, offset: int = 0) -> dict:
             )
 
         if resp.status_code not in (200, 204):
-            body = resp.text[:500]
+            body = resp.text[:1000]
+            logger.error("SuiteQL HTTP %s — query: %s — response: %s",
+                         resp.status_code, query.strip()[:300], body)
             raise RuntimeError(
                 f"SuiteQL returned HTTP {resp.status_code}: {body}"
             )
 
-        return resp.json()
+        result = resp.json()
+        logger.info("SuiteQL page OK — %d items returned", len(result.get("items", [])))
+        return result
 
     raise RuntimeError("NetSuite SuiteQL failed after 5 retries (rate limited).")
 
