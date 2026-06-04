@@ -29,35 +29,18 @@ import requests
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Credentials (from environment variables)
+# Constants
 # ---------------------------------------------------------------------------
-NS_ACCOUNT_ID      = os.environ.get("NS_ACCOUNT_ID", "3412280")
-NS_CONSUMER_KEY    = os.environ.get("NS_CONSUMER_KEY", "")
-NS_CONSUMER_SECRET = os.environ.get("NS_CONSUMER_SECRET", "")
-NS_TOKEN_ID        = os.environ.get("NS_TOKEN_ID", "")
-NS_TOKEN_SECRET    = os.environ.get("NS_TOKEN_SECRET", "")
-
-SUITEQL_URL = (
-    f"https://{NS_ACCOUNT_ID}.suitetalk.api.netsuite.com"
-    f"/services/rest/query/v1/suiteql"
-)
-
 PAGE_SIZE = 1000  # NetSuite max rows per SuiteQL page
+# All credentials are read live from os.environ inside _build_auth_header()
+# and _suiteql_request() — never cached at import time.
 
 # ---------------------------------------------------------------------------
 # Custom field IDs — set via Railway environment variables.
 # Find internal IDs in NetSuite: Setup → Customization → Transaction Body
 # Fields (for custbody_*) or Entity Fields (for custentity_*).
-# If a variable is not set the column will return empty strings.
+# If a variable is not set the column will return empty strings '' in SQL.
 # ---------------------------------------------------------------------------
-def _field(env_var: str) -> str:
-    """Return SQL expression for a custom field, or '' literal if not configured."""
-    fid = os.environ.get(env_var, "")
-    if fid:
-        return fid
-    return None   # will be replaced with '' in query builder
-
-
 def _build_invoice_query() -> str:
     """Build the invoice SuiteQL query using live env var field IDs."""
     def col(env_var: str, alias: str, on_customer: bool = False) -> str:
@@ -93,6 +76,8 @@ ORDER BY c.entityid, t.trandate
 
 
 def _build_credit_query() -> str:
+    # foreignamountunpaid on credit memos may be negative (amount owed to customer)
+    # or positive depending on NS configuration — use ABS to handle both.
     return """
 SELECT
   c.altname || ' : ' || c.entityid   AS "Collect As",
@@ -101,7 +86,7 @@ SELECT
 FROM transaction t
 INNER JOIN customer c ON t.entity = c.id
 WHERE t.type = 'CustCred'
-  AND t.foreignamountunpaid < 0
+  AND ABS(t.foreignamountunpaid) > 0
 ORDER BY c.entityid
 """
 
