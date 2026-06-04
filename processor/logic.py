@@ -102,9 +102,13 @@ def date_to_bucket(invoice_date: datetime.date, bucket_ranges: dict) -> str:
 def _parse_date(date_str: str) -> Optional[datetime.date]:
     if not date_str:
         return None
-    for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%d/%m/%Y", "%m-%d-%Y"):
+    s = date_str.strip()
+    # ISO datetime with time component (SpreadsheetML): "2024-05-15T00:00:00.000"
+    if "T" in s:
+        s = s.split("T")[0]
+    for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%d/%m/%Y", "%m-%d-%Y", "%m/%d/%y"):
         try:
-            return datetime.datetime.strptime(date_str.strip(), fmt).date()
+            return datetime.datetime.strptime(s, fmt).date()
         except ValueError:
             continue
     return None
@@ -541,7 +545,7 @@ def process_collections(
             continue  # Future invoices excluded from balances
 
         acc.balances[bucket] += amount
-        acc.raw_balances[bucket] = acc.balances[bucket]  # will be updated after waterfall
+        acc.raw_balances[bucket] += amount
 
     # --- Group credits by account ---
     credit_map: dict[str, list[float]] = {}
