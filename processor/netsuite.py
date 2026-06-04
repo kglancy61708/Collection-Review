@@ -45,30 +45,45 @@ SUITEQL_URL = (
 PAGE_SIZE = 1000  # NetSuite max rows per SuiteQL page
 
 # ---------------------------------------------------------------------------
-# Custom field IDs — adjust these if columns come back empty
+# Custom field IDs — set via Railway environment variables.
+# Find internal IDs in NetSuite: Setup → Customization → Transaction Body
+# Fields (for custbody_*) or Entity Fields (for custentity_*).
+# If a variable is not set the column will return empty strings.
 # ---------------------------------------------------------------------------
-F_COLLECTIONS_STATUS        = "custbody_collections_status"
-F_IS_FINANCE_CHARGE         = "custbody_is_finance_charge"
-F_COLLECTION_ESCALATION     = "custbody_collection_escalation_status"
-F_FORTIS_AUTOPAY            = "custbody_fortis_autopay_enrollment"
-F_ACCOUNT_RESTRICTED        = "custentity_account_restricted"
+def _field(env_var: str) -> str:
+    """Return SQL expression for a custom field, or '' literal if not configured."""
+    fid = os.environ.get(env_var, "")
+    if fid:
+        return fid
+    return None   # will be replaced with '' in query builder
 
-# ---------------------------------------------------------------------------
-# SuiteQL queries
-# ---------------------------------------------------------------------------
 
-INVOICE_QUERY = f"""
+def _build_invoice_query() -> str:
+    """Build the invoice SuiteQL query using live env var field IDs."""
+    def col(env_var: str, alias: str, on_customer: bool = False) -> str:
+        fid = os.environ.get(env_var, "")
+        if fid:
+            if on_customer:
+                return f'  BUILTIN.DF(c.{fid})  AS "{alias}"'
+            return f'  t.{fid}  AS "{alias}"'
+        return f'  \'\'  AS "{alias}"'
+
+    category_fid = os.environ.get("NS_FIELD_CATEGORY", "")
+    category_col = f'  BUILTIN.DF(t.{category_fid})  AS "Category"' if category_fid \
+                   else '  \'\'  AS "Category"'
+
+    return f"""
 SELECT
   c.altname || ' : ' || c.entityid          AS "Collect As",
   TO_CHAR(t.trandate, 'MM/DD/YYYY')          AS "Date",
   t.foreignamountunpaid                       AS "Amount Remaining",
   BUILTIN.DF(t.subsidiary)                   AS "Business Unit",
-  BUILTIN.DF(t.class)                        AS "Category",
-  t.{F_COLLECTIONS_STATUS}                   AS "Collections Status",
-  t.{F_IS_FINANCE_CHARGE}                    AS "Is Finance Charge",
-  t.{F_COLLECTION_ESCALATION}                AS "Collection Escalation Status",
-  t.{F_FORTIS_AUTOPAY}                       AS "Fortis Autopay Enrollment",
-  BUILTIN.DF(c.{F_ACCOUNT_RESTRICTED})       AS "Account Restricted"
+{category_col},
+{col("NS_FIELD_COLLECTIONS_STATUS",       "Collections Status")},
+{col("NS_FIELD_IS_FINANCE_CHARGE",        "Is Finance Charge")},
+{col("NS_FIELD_COLLECTION_ESCALATION",    "Collection Escalation Status")},
+{col("NS_FIELD_FORTIS_AUTOPAY",           "Fortis Autopay Enrollment")},
+{col("NS_FIELD_ACCOUNT_RESTRICTED",       "Account Restricted", on_customer=True)}
 FROM transaction t
 INNER JOIN customer c ON t.entity = c.id
 WHERE t.type = 'CustInvc'
@@ -76,7 +91,9 @@ WHERE t.type = 'CustInvc'
 ORDER BY c.entityid, t.trandate
 """
 
-CREDIT_QUERY = f"""
+
+def _build_credit_query() -> str:
+    return """
 SELECT
   c.altname || ' : ' || c.entityid   AS "Collect As",
   t.foreignamountunpaid               AS "Amount Remaining",
@@ -353,8 +370,8 @@ def pull_netsuite_data() -> tuple[list[dict], list[dict]]:
             "NS_TOKEN_SECRET as environment variables on your Railway service."
         )
 
-    raw_invoices = _run_query(INVOICE_QUERY, "invoices")
-    raw_credits  = _run_query(CREDIT_QUERY, "credits")
+    raw_invoices = _run_query(_build_invoice_query(), "invoices")
+    raw_credits  = _run_query(_build_credit_query(), "credits")
 
     invoices = _normalise_invoice_rows(raw_invoices)
     credits  = _normalise_credit_rows(raw_credits)
