@@ -1,0 +1,189 @@
+/* Collections Review Generator — custom styles */
+
+body {
+    background-color: #f0f2f5;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+.app-header {
+    background: linear-gradient(135deg, #2F5496 0%, #1a3a6b 100%);
+    color: white;
+    padding: 1.5rem 0;
+    margin-bottom: 2rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+.app-header h1 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: 0.5px;
+}
+
+.app-header .subtitle {
+    font-size: 0.9rem;
+    opacity: 0.8;
+    margin-top: 0.25rem;
+}
+
+.step-card {
+    border: none;
+    border-radius: 10px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+}
+
+.step-card .card-header {
+    background: #2F5496;
+    color: white;
+    font-weight: 600;
+    font-size: 0.95rem;
+    padding: 0.75rem 1.25rem;
+    border: none;
+}
+
+.step-card .card-header .step-badge {
+    background: rgba(255,255,255,0.25);
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    margin-right: 0.5rem;
+}
+
+.step-card .card-body {
+    padding: 1.5rem;
+}
+
+/* Preview card */
+#preview-card {
+    display: none;
+}
+
+#preview-card .card-header {
+    background: #375623;
+}
+
+/* Loading overlay */
+#loading-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    color: white;
+}
+
+#loading-overlay.active {
+    display: flex;
+}
+
+#loading-overlay .spinner-border {
+    width: 3rem;
+    height: 3rem;
+    margin-bottom: 1rem;
+}
+
+#loading-overlay .loading-text {
+    font-size: 1.1rem;
+    font-weight: 500;
+}
+
+/* Status badges in preview */
+.status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin: 2px;
+    color: white;
+}
+
+.status-cancel-np { background-color: #7B0000; }
+.status-predemand { background-color: #E26B0A; }
+.status-collection-letter { background-color: #C00000; }
+.status-call-customer { background-color: #F4B942; }
+.status-fre { background-color: #375623; }
+.status-skipped { background-color: #7030A0; }
+.status-special { background-color: #2E75B6; }
+.status-no-action { background-color: #6c757d; }
+
+/* Error alert */
+#error-alert {
+    display: none;
+}
+
+/* Success alert */
+#success-alert {
+    display: none;
+}
+
+/* Tabs */
+.nav-tabs .nav-link {
+    color: #2F5496;
+    font-weight: 500;
+}
+
+.nav-tabs .nav-link.active {
+    color: #2F5496;
+    font-weight: 700;
+    border-bottom: 3px solid #2F5496;
+}
+
+/* File input */
+.form-control:focus, .form-select:focus {
+    border-color: #2F5496;
+    box-shadow: 0 0 0 0.2rem rgba(47, 84, 150, 0.25);
+}
+
+/* Buttons */
+.btn-primary {
+    background-color: #2F5496;
+    border-color: #2F5496;
+}
+
+.btn-primary:hover {
+    background-color: #1a3a6b;
+    border-color: #1a3a6b;
+}
+
+.btn-success {
+    background-color: #375623;
+    border-color: #375623;
+}
+
+.btn-success:hover {
+    background-color: #274118;
+    border-color: #274118;
+}
+
+/* Preview table */
+.preview-table th {
+    background: #f0f2f5;
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #2F5496;
+}
+
+.preview-table td {
+    vertical-align: middle;
+}
+
+/* Footer */
+.app-footer {
+    text-align: center;
+    color: #6c757d;
+    font-size: 0.8rem;
+    margin-top: 2rem;
+    margin-bottom: 1.5rem;
+}
