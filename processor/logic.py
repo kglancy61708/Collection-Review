@@ -495,7 +495,7 @@ def process_collections(
                 collect_as=ca,
                 business_unit=inv.get("business_unit", ""),
                 category=inv.get("category", ""),
-                collections_status=inv.get("collections_status", ""),
+                current_collections_status=inv.get("collections_status", ""),
                 collection_escalation_status=inv.get("collection_escalation_status", ""),
                 account_restricted=inv.get("account_restricted", ""),
                 fortis_autopay_enrollment=inv.get("fortis_autopay_enrollment", ""),
