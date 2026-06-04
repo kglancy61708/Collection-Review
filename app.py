@@ -98,15 +98,15 @@ def _generate_from_upload():
         return jsonify({"error": "Both invoice_file and credits_file are required."}), 400
 
     try:
-        invoice_content = invoice_file.read().decode("utf-8", errors="replace")
-        credit_content = credits_file.read().decode("utf-8", errors="replace")
-        invoices = parse_invoices(invoice_content)
-        credits = parse_credits(credit_content)
+        invoice_bytes = invoice_file.read()
+        credit_bytes = credits_file.read()
+        invoices = parse_invoices(invoice_bytes)
+        credits = parse_credits(credit_bytes)
         accounts = process_collections(invoices, credits, month, year)
         xlsx_bytes = build_workbook(accounts, month, year)
     except Exception as e:
         logger.exception("Error generating report from upload")
-        return jsonify({"error": f"Error: {e}"}), 500
+        return jsonify({"error": str(e)}), 500
 
     return _xlsx_response(xlsx_bytes, month, year)
 

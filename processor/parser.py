@@ -35,14 +35,43 @@ def parse_credits(content: str | bytes) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def _parse_content(content: str | bytes) -> list[dict]:
+    # Keep raw bytes for XML parsing (handles encoding declarations correctly).
+    raw_bytes: bytes | None = None
     if isinstance(content, bytes):
-        content = content.decode("utf-8", errors="replace")
+        raw_bytes = content
+        content = _decode_bytes(content)
 
-    stripped = content.lstrip()
-    if stripped.startswith("<?xml") or stripped.startswith("<Workbook") or stripped.startswith("<ss:"):
-        return _parse_spreadsheetml(content)
+    # Strip Unicode BOM if present
+    content = content.lstrip("﻿").lstrip()
+
+    is_xml = (
+        content.startswith("<?xml")
+        or content.startswith("<Workbook")
+        or content.startswith("<ss:")
+        or ("<Workbook" in content[:500])
+    )
+    if is_xml:
+        return _parse_spreadsheetml(raw_bytes if raw_bytes is not None else content.encode("utf-8"))
     else:
         return _parse_csv(content)
+
+
+def _decode_bytes(data: bytes) -> str:
+    """Detect encoding from BOM or XML declaration and decode."""
+    # UTF-16 LE BOM
+    if data[:2] == b"\xff\xfe":
+        return data.decode("utf-16-le", errors="replace").lstrip("﻿")
+    # UTF-16 BE BOM
+    if data[:2] == b"\xfe\xff":
+        return data.decode("utf-16-be", errors="replace").lstrip("﻿")
+    # UTF-8 BOM
+    if data[:3] == b"\xef\xbb\xbf":
+        return data.decode("utf-8-sig", errors="replace")
+    # Try UTF-8, fall back to latin-1
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("latin-1", errors="replace")
 
 
 def _parse_csv(text: str) -> list[dict]:
@@ -55,12 +84,18 @@ def _parse_csv(text: str) -> list[dict]:
     return normalised
 
 
-def _parse_spreadsheetml(xml_text: str) -> list[dict]:
+def _parse_spreadsheetml(xml_input: str | bytes) -> list[dict]:
     """Parse SpreadsheetML (Office 2003 XML) into list of dicts."""
+    if isinstance(xml_input, str):
+        xml_input = xml_input.encode("utf-8")
+    # Strip UTF-8 BOM if present before passing to XML parser
+    if xml_input.startswith(b"\xef\xbb\xbf"):
+        xml_input = xml_input[3:]
     try:
-        root = ET.fromstring(xml_text.encode("utf-8"))
+        root = ET.fromstring(xml_input)
     except ET.ParseError as e:
-        raise ValueError(f"Failed to parse SpreadsheetML XML: {e}")
+        raise ValueError(f"Failed to parse SpreadsheetML XML: {e}. "
+                         f"Make sure the file is a NetSuite XLS export (not a binary .xls file).")
 
     ns = {"ss": SS_NS}
 

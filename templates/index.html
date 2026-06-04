@@ -236,8 +236,9 @@ function showSuccess(msg) {
 }
 function showInlineError(elId, msg) {
   const el = $(elId);
-  el.textContent = msg;
+  el.textContent = '⚠️ ' + msg;
   el.style.display = '';
+  el.scrollIntoView({behavior: 'smooth', block: 'center'});
 }
 function hideInlineError(elId) {
   $(elId).style.display = 'none';
