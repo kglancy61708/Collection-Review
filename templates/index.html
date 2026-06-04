@@ -132,37 +132,28 @@
 
         <!-- NetSuite tab -->
         <div class="tab-pane fade" id="ns-pane">
+          {% if not ns_configured %}
           <div class="alert alert-warning py-2 mb-3" style="font-size:0.875rem;">
             <i class="bi bi-exclamation-triangle me-1"></i>
-            <strong>Note:</strong> Direct NetSuite pull requires standard username/password login (no SSO or multi-factor auth). If your account uses SSO or MFA, use the <strong>Upload Files</strong> tab instead.
+            <strong>NetSuite credentials not configured.</strong>
+            Add <code>NS_CONSUMER_KEY</code>, <code>NS_CONSUMER_SECRET</code>,
+            <code>NS_TOKEN_ID</code>, and <code>NS_TOKEN_SECRET</code> as
+            environment variables in your Railway service, then redeploy.
           </div>
-          <div class="row g-3">
-            <div class="col-sm-4">
-              <label class="form-label fw-semibold" for="ns-account">Account ID</label>
-              <input type="text" class="form-control" id="ns-account" placeholder="e.g. 3412280" autocomplete="off" value="3412280">
-              <div class="form-text">Your NetSuite account number</div>
-            </div>
-            <div class="col-sm-4">
-              <label class="form-label fw-semibold" for="ns-email">Email</label>
-              <input type="email" class="form-control" id="ns-email" placeholder="you@company.com" autocomplete="off">
-            </div>
-            <div class="col-sm-4">
-              <label class="form-label fw-semibold" for="ns-password">Password</label>
-              <div class="input-group">
-                <input type="password" class="form-control" id="ns-password" autocomplete="current-password">
-                <button class="btn btn-outline-secondary" type="button" id="toggle-password" tabindex="-1">
-                  <i class="bi bi-eye" id="eye-icon"></i>
-                </button>
-              </div>
-            </div>
-            <div class="col-12 d-flex gap-2 flex-wrap">
-              <button class="btn btn-primary px-4" id="btn-pull">
-                <i class="bi bi-cloud-arrow-down me-1"></i> Pull &amp; Preview
-              </button>
-              <button class="btn btn-success px-4" id="btn-generate-ns">
-                <i class="bi bi-file-earmark-excel me-1"></i> Generate Report
-              </button>
-            </div>
+          {% else %}
+          <div class="alert alert-success py-2 mb-3" style="font-size:0.875rem;">
+            <i class="bi bi-check-circle me-1"></i>
+            <strong>NetSuite TBA configured.</strong>
+            Credentials are loaded from server environment variables.
+          </div>
+          {% endif %}
+          <div class="d-flex gap-2 flex-wrap">
+            <button class="btn btn-primary px-4" id="btn-pull" {% if not ns_configured %}disabled{% endif %}>
+              <i class="bi bi-cloud-arrow-down me-1"></i> Pull &amp; Preview
+            </button>
+            <button class="btn btn-success px-4" id="btn-generate-ns" {% if not ns_configured %}disabled{% endif %}>
+              <i class="bi bi-file-earmark-excel me-1"></i> Generate Report
+            </button>
           </div>
           <!-- NS inline error -->
           <div id="ns-error" class="alert alert-danger mt-3" style="display:none;"></div>
@@ -261,55 +252,25 @@ function hideInlineError(elId) {
 })();
 
 // ---------------------------------------------------------------------------
-// Password toggle
-// ---------------------------------------------------------------------------
-$('toggle-password').addEventListener('click', () => {
-  const inp = $('ns-password');
-  const icon = $('eye-icon');
-  if (inp.type === 'password') {
-    inp.type = 'text';
-    icon.className = 'bi bi-eye-slash';
-  } else {
-    inp.type = 'password';
-    icon.className = 'bi bi-eye';
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Shared state from last pull
-// ---------------------------------------------------------------------------
-let lastPullData = null;
-
-// ---------------------------------------------------------------------------
-// Pull & Preview
+// Pull & Preview (TBA — no credentials needed in UI)
 // ---------------------------------------------------------------------------
 $('btn-pull').addEventListener('click', async () => {
   hideInlineError('ns-error');
-  const account_id = $('ns-account').value.trim();
-  const email = $('ns-email').value.trim();
-  const password = $('ns-password').value;
   const month = parseInt($('report-month').value);
-  const year = parseInt($('report-year').value);
+  const year  = parseInt($('report-year').value);
 
-  if (!account_id || !email || !password) {
-    showInlineError('ns-error', 'Please enter your NetSuite Account ID, email, and password.');
-    return;
-  }
-
-  showLoading('Connecting to NetSuite and pulling data…');
+  showLoading('Connecting to NetSuite via TBA and pulling data…');
   try {
     const resp = await fetch('/pull', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({account_id, email, password, month, year}),
+      body: JSON.stringify({month, year}),
     });
     const data = await resp.json();
     if (!resp.ok || data.error) {
-      showInlineError('ns-error', (data.error || 'Unknown error during pull.') +
-        ' — If this keeps failing, use the Upload Files tab instead.');
+      showInlineError('ns-error', data.error || 'Unknown error during pull.');
       return;
     }
-    lastPullData = {account_id, email, password, month, year};
     renderPreview(data);
   } catch (e) {
     showInlineError('ns-error', 'Network error: ' + e.message);
@@ -319,32 +280,23 @@ $('btn-pull').addEventListener('click', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Generate from NetSuite
+// Generate from NetSuite (TBA)
 // ---------------------------------------------------------------------------
 $('btn-generate-ns').addEventListener('click', async () => {
   hideInlineError('ns-error');
-  const account_id = $('ns-account').value.trim();
-  const email = $('ns-email').value.trim();
-  const password = $('ns-password').value;
   const month = parseInt($('report-month').value);
-  const year = parseInt($('report-year').value);
-
-  if (!account_id || !email || !password) {
-    showInlineError('ns-error', 'Please enter your NetSuite Account ID, email, and password.');
-    return;
-  }
+  const year  = parseInt($('report-year').value);
 
   showLoading('Pulling from NetSuite and generating report…');
   try {
     const resp = await fetch('/generate', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({account_id, email, password, month, year}),
+      body: JSON.stringify({month, year}),
     });
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}));
-      showInlineError('ns-error', (data.error || 'Failed to generate report.') +
-        ' — If this keeps failing, use the Upload Files tab instead.');
+      showInlineError('ns-error', data.error || 'Failed to generate report.');
       return;
     }
     await downloadBlob(resp);

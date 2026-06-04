@@ -1,104 +1,353 @@
 """
-NetSuite session-based data pull.
-Authenticates via the customer login page and downloads saved search CSVs.
+NetSuite Token-Based Authentication (OAuth 1.0a) data pull.
+Uses SuiteQL REST API with HMAC-SHA256 signed requests.
+
+Credentials are read from environment variables:
+  NS_ACCOUNT_ID       — e.g. 3412280
+  NS_CONSUMER_KEY     — from Integration record
+  NS_CONSUMER_SECRET  — from Integration record
+  NS_TOKEN_ID         — from Access Token record
+  NS_TOKEN_SECRET     — from Access Token record
+
+NOTE: Custom field internal IDs (custbody_*, custentity_*) below must match
+your NetSuite account configuration. If a column returns empty, check the
+field ID against Setup → Customization → Transaction Body Fields in NetSuite.
 """
-import requests
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
 import logging
+import os
+import time
+import urllib.parse
+import uuid
+
+import requests
 
 logger = logging.getLogger(__name__)
 
-INVOICE_SEARCH_ID = "7474"
-CREDIT_SEARCH_ID = "6011"
-LOGIN_URL = "https://system.netsuite.com/pages/customerlogin.jsp"
+# ---------------------------------------------------------------------------
+# Credentials (from environment variables)
+# ---------------------------------------------------------------------------
+NS_ACCOUNT_ID      = os.environ.get("NS_ACCOUNT_ID", "3412280")
+NS_CONSUMER_KEY    = os.environ.get("NS_CONSUMER_KEY", "")
+NS_CONSUMER_SECRET = os.environ.get("NS_CONSUMER_SECRET", "")
+NS_TOKEN_ID        = os.environ.get("NS_TOKEN_ID", "")
+NS_TOKEN_SECRET    = os.environ.get("NS_TOKEN_SECRET", "")
+
+SUITEQL_URL = (
+    f"https://{NS_ACCOUNT_ID}.suitetalk.api.netsuite.com"
+    f"/services/rest/query/v1/suiteql"
+)
+
+PAGE_SIZE = 1000  # NetSuite max rows per SuiteQL page
+
+# ---------------------------------------------------------------------------
+# Custom field IDs — adjust these if columns come back empty
+# ---------------------------------------------------------------------------
+F_COLLECTIONS_STATUS        = "custbody_collections_status"
+F_IS_FINANCE_CHARGE         = "custbody_is_finance_charge"
+F_COLLECTION_ESCALATION     = "custbody_collection_escalation_status"
+F_FORTIS_AUTOPAY            = "custbody_fortis_autopay_enrollment"
+F_ACCOUNT_RESTRICTED        = "custentity_account_restricted"
+
+# ---------------------------------------------------------------------------
+# SuiteQL queries
+# ---------------------------------------------------------------------------
+
+INVOICE_QUERY = f"""
+SELECT
+  c.altname || ' : ' || c.entityid          AS "Collect As",
+  TO_CHAR(t.trandate, 'MM/DD/YYYY')          AS "Date",
+  t.amountremaining                           AS "Amount Remaining",
+  BUILTIN.DF(t.subsidiary)                   AS "Business Unit",
+  BUILTIN.DF(t.class)                        AS "Category",
+  t.{F_COLLECTIONS_STATUS}                   AS "Collections Status",
+  t.{F_IS_FINANCE_CHARGE}                    AS "Is Finance Charge",
+  t.{F_COLLECTION_ESCALATION}                AS "Collection Escalation Status",
+  t.{F_FORTIS_AUTOPAY}                       AS "Fortis Autopay Enrollment",
+  BUILTIN.DF(c.{F_ACCOUNT_RESTRICTED})       AS "Account Restricted"
+FROM transaction t
+INNER JOIN customer c ON t.entity = c.id
+WHERE t.type = 'CustInvc'
+  AND t.status = 'open'
+  AND t.void = 'F'
+  AND t.amountremaining > 0
+ORDER BY c.entityid, t.trandate
+"""
+
+CREDIT_QUERY = f"""
+SELECT
+  c.altname || ' : ' || c.entityid  AS "Collect As",
+  t.amountremaining                   AS "Amount Remaining",
+  BUILTIN.DF(t.customform)            AS "Custom Form"
+FROM transaction t
+INNER JOIN customer c ON t.entity = c.id
+WHERE t.type = 'CustCred'
+  AND t.status = 'open'
+  AND t.void = 'F'
+  AND t.amountremaining < 0
+ORDER BY c.entityid
+"""
 
 
-def pull_netsuite_data(account_id: str, email: str, password: str) -> tuple[str, str]:
+# ---------------------------------------------------------------------------
+# OAuth 1.0a signing
+# ---------------------------------------------------------------------------
+
+def _pct_encode(s: str) -> str:
+    """RFC 3986 percent-encode (encodes ! ' ( ) * as well)."""
+    return urllib.parse.quote(str(s), safe="")
+
+
+def _build_auth_header(method: str, url: str, query_params: dict | None = None) -> str:
     """
-    Authenticate with NetSuite and download both saved searches.
-    Returns (invoice_csv_text, credits_csv_text).
-    Raises RuntimeError with descriptive message on failure.
-    """
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        )
-    })
+    Build a signed OAuth 1.0a Authorization header.
 
-    # Step 1: Authenticate
-    login_payload = {
-        "email": email,
-        "password": password,
-        "account": account_id.strip(),
-        "redirect": "index.html",
-        "machine": "",
-        "trusteddevice": "F",
+    query_params: any URL query string parameters (e.g. {"limit": "1000", "offset": "0"})
+    that must be included in the signature base string.
+    """
+    oauth_params: dict[str, str] = {
+        "oauth_consumer_key":     NS_CONSUMER_KEY,
+        "oauth_nonce":            uuid.uuid4().hex,
+        "oauth_signature_method": "HMAC-SHA256",
+        "oauth_timestamp":        str(int(time.time())),
+        "oauth_token":            NS_TOKEN_ID,
+        "oauth_version":          "1.0",
     }
 
-    try:
-        login_resp = session.post(LOGIN_URL, data=login_payload, allow_redirects=True, timeout=30)
-    except requests.RequestException as e:
-        raise RuntimeError(f"Network error during NetSuite login: {e}")
+    # Collect all params for signature: oauth params + query string params
+    all_params: dict[str, str] = {**oauth_params}
+    if query_params:
+        all_params.update({str(k): str(v) for k, v in query_params.items()})
 
-    # Detect login failure by looking for known failure indicators
-    body = login_resp.text.lower()
-    if (
-        "invalid email address or password" in body
-        or "your e-mail address or password is incorrect" in body
-        or "customerlogin" in login_resp.url.lower()
-        and "error" in body
-    ):
-        raise RuntimeError(
-            "NetSuite authentication failed. Check your account ID, email, and password."
-        )
-
-    if login_resp.status_code not in (200, 302):
-        raise RuntimeError(
-            f"NetSuite login returned unexpected status {login_resp.status_code}."
-        )
-
-    # Step 2: Download saved searches
-    base_url = f"https://{account_id.strip()}.app.netsuite.com"
-    invoice_url = (
-        f"{base_url}/app/common/search/searchresults.nl"
-        f"?searchid={INVOICE_SEARCH_ID}&whence=&csv=T"
+    # Parameter string: sorted by encoded key, then encoded value
+    param_pairs = sorted(
+        (_pct_encode(k), _pct_encode(v)) for k, v in all_params.items()
     )
-    credit_url = (
-        f"{base_url}/app/common/search/searchresults.nl"
-        f"?searchid={CREDIT_SEARCH_ID}&whence=&csv=T"
+    param_string = "&".join(f"{k}={v}" for k, v in param_pairs)
+
+    # Base URL: scheme + host + path only (no query string)
+    parsed = urllib.parse.urlparse(url)
+    base_url = urllib.parse.urlunparse(
+        (parsed.scheme, parsed.netloc, parsed.path, "", "", "")
     )
 
-    invoice_csv = _download_search(session, invoice_url, "invoices")
-    credit_csv = _download_search(session, credit_url, "credits")
+    # Signature base string
+    base_string = "&".join([
+        _pct_encode(method.upper()),
+        _pct_encode(base_url),
+        _pct_encode(param_string),
+    ])
 
-    return invoice_csv, credit_csv
+    # Signing key
+    signing_key = f"{_pct_encode(NS_CONSUMER_SECRET)}&{_pct_encode(NS_TOKEN_SECRET)}"
+
+    # HMAC-SHA256
+    raw_sig = hmac.new(
+        signing_key.encode("utf-8"),
+        base_string.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    oauth_params["oauth_signature"] = base64.b64encode(raw_sig).decode()
+
+    # Build header value — realm uses uppercase account ID
+    realm = NS_ACCOUNT_ID.upper().replace("-", "_")
+    header_parts = [f'realm="{realm}"'] + [
+        f'{k}="{_pct_encode(v)}"'
+        for k, v in sorted(oauth_params.items())
+    ]
+    return "OAuth " + ", ".join(header_parts)
 
 
-def _download_search(session: requests.Session, url: str, label: str) -> str:
-    """Download a saved search CSV and return its text content."""
-    try:
-        resp = session.get(url, timeout=60, allow_redirects=True)
-    except requests.RequestException as e:
-        raise RuntimeError(f"Network error downloading {label} search: {e}")
+# ---------------------------------------------------------------------------
+# HTTP request with retry / backoff
+# ---------------------------------------------------------------------------
 
-    if resp.status_code == 403:
+def _suiteql_request(query: str, offset: int = 0) -> dict:
+    """POST one page of a SuiteQL query. Retries on 429 with backoff."""
+    params = {"limit": str(PAGE_SIZE), "offset": str(offset)}
+    url = SUITEQL_URL  # query params go in the URL for the actual request
+
+    for attempt in range(5):
+        auth = _build_auth_header("POST", SUITEQL_URL, query_params=params)
+        try:
+            resp = requests.post(
+                SUITEQL_URL,
+                params=params,
+                json={"q": query.strip()},
+                headers={
+                    "Authorization": auth,
+                    "Content-Type":  "application/json",
+                    "prefer":        "transient",
+                },
+                timeout=60,
+            )
+        except requests.RequestException as e:
+            raise RuntimeError(f"Network error calling SuiteQL: {e}")
+
+        if resp.status_code == 429:
+            wait = 3 * (attempt + 1)
+            logger.warning("NS rate limit (429), retrying in %ds…", wait)
+            time.sleep(wait)
+            continue
+
+        if resp.status_code == 401:
+            raise RuntimeError(
+                "NetSuite returned 401 Unauthorized. "
+                "Check that NS_CONSUMER_KEY, NS_CONSUMER_SECRET, NS_TOKEN_ID, "
+                "and NS_TOKEN_SECRET environment variables are set correctly."
+            )
+
+        if resp.status_code not in (200, 204):
+            body = resp.text[:500]
+            raise RuntimeError(
+                f"SuiteQL returned HTTP {resp.status_code}: {body}"
+            )
+
+        return resp.json()
+
+    raise RuntimeError("NetSuite SuiteQL failed after 5 retries (rate limited).")
+
+
+# ---------------------------------------------------------------------------
+# Paginated query runner
+# ---------------------------------------------------------------------------
+
+def _run_query(query: str, label: str) -> list[dict]:
+    """Run a paginated SuiteQL query, return all rows as list of dicts."""
+    rows: list[dict] = []
+    offset = 0
+
+    while True:
+        logger.info("Fetching %s rows %d–%d…", label, offset, offset + PAGE_SIZE)
+        data = _suiteql_request(query, offset=offset)
+
+        items = data.get("items", [])
+        rows.extend(items)
+
+        total = data.get("totalResults", len(rows))
+        offset += PAGE_SIZE
+
+        if offset >= total or not items:
+            break
+
+    logger.info("Fetched %d total %s rows.", len(rows), label)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Column normalisation helpers
+# ---------------------------------------------------------------------------
+
+def _normalise_invoice_rows(rows: list[dict]) -> list[dict]:
+    """
+    Convert SuiteQL result rows to the normalised invoice dict format
+    expected by processor.logic.process_collections().
+    """
+    result = []
+    for row in rows:
+        def g(key: str, *fallbacks: str) -> str:
+            for k in (key, *fallbacks):
+                v = row.get(k) or row.get(k.lower()) or row.get(k.upper()) or ""
+                if v is not None:
+                    return str(v).strip()
+            return ""
+
+        amount_str = g("Amount Remaining", "amountremaining", "amountRemaining")
+        try:
+            amount = float(amount_str.replace(",", ""))
+        except (ValueError, AttributeError):
+            amount = 0.0
+
+        record = {
+            "collect_as":                    g("Collect As"),
+            "date":                          g("Date"),
+            "amount_remaining":              amount,
+            "business_unit":                 g("Business Unit"),
+            "category":                      g("Category"),
+            "collections_status":            g("Collections Status"),
+            "is_finance_charge":             g("Is Finance Charge"),
+            "collection_escalation_status":  g("Collection Escalation Status"),
+            "fortis_autopay_enrollment":     g("Fortis Autopay Enrollment"),
+            "account_restricted":            g("Account Restricted"),
+        }
+        if record["collect_as"]:
+            result.append(record)
+    return result
+
+
+def _normalise_credit_rows(rows: list[dict]) -> list[dict]:
+    """
+    Convert SuiteQL result rows to the normalised credit dict format.
+    SRDP credits are excluded here.
+    """
+    result = []
+    for row in rows:
+        def g(key: str, *fallbacks: str) -> str:
+            for k in (key, *fallbacks):
+                v = row.get(k) or row.get(k.lower()) or ""
+                if v is not None:
+                    return str(v).strip()
+            return ""
+
+        custom_form = g("Custom Form", "customform")
+        if "srdp" in custom_form.lower():
+            continue
+
+        amount_str = g("Amount Remaining", "amountremaining")
+        try:
+            amount = float(amount_str.replace(",", ""))
+        except (ValueError, AttributeError):
+            amount = 0.0
+
+        record = {
+            "collect_as":       g("Collect As"),
+            "amount_remaining": amount,
+            "custom_form":      custom_form,
+        }
+        if record["collect_as"]:
+            result.append(record)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def check_credentials() -> bool:
+    """Return True if all required env vars are set."""
+    return all([NS_CONSUMER_KEY, NS_CONSUMER_SECRET, NS_TOKEN_ID, NS_TOKEN_SECRET])
+
+
+def pull_netsuite_data() -> tuple[list[dict], list[dict]]:
+    """
+    Pull open invoices and credits from NetSuite via SuiteQL.
+    Returns (invoice_rows, credit_rows) as normalised dicts ready for
+    processor.logic.process_collections().
+
+    Raises RuntimeError with a descriptive message on failure.
+    """
+    if not check_credentials():
         raise RuntimeError(
-            f"Access denied downloading {label} search. "
-            "The NetSuite session may have expired or the saved search ID is incorrect."
-        )
-    if resp.status_code != 200:
-        raise RuntimeError(
-            f"Failed to download {label} search: HTTP {resp.status_code}"
+            "NetSuite credentials are not configured. "
+            "Set NS_CONSUMER_KEY, NS_CONSUMER_SECRET, NS_TOKEN_ID, and "
+            "NS_TOKEN_SECRET as environment variables on your Railway service."
         )
 
-    # Detect redirect back to login (session not established)
-    content_type = resp.headers.get("Content-Type", "").lower()
-    if "text/html" in content_type and "<html" in resp.text[:200].lower():
+    raw_invoices = _run_query(INVOICE_QUERY, "invoices")
+    raw_credits  = _run_query(CREDIT_QUERY, "credits")
+
+    invoices = _normalise_invoice_rows(raw_invoices)
+    credits  = _normalise_credit_rows(raw_credits)
+
+    if not invoices:
         raise RuntimeError(
-            f"NetSuite returned an HTML page instead of {label} CSV data. "
-            "Authentication may have failed or timed out."
+            "SuiteQL returned 0 invoice rows. This usually means a custom field ID "
+            "is incorrect or the Access Token role lacks SuiteQL / Transaction permissions. "
+            "Check F_COLLECTIONS_STATUS and related constants in processor/netsuite.py."
         )
 
-    return resp.text
+    return invoices, credits

@@ -7,12 +7,11 @@ import datetime
 import io
 import logging
 import os
-import traceback
 
 from flask import Flask, jsonify, render_template, request, send_file
 
-from processor.logic import process_collections, STATUS_SEVERITY
-from processor.netsuite import pull_netsuite_data
+from processor.logic import process_collections
+from processor.netsuite import pull_netsuite_data, check_credentials
 from processor.parser import parse_invoices, parse_credits
 from processor.excel_writer import build_workbook
 
@@ -29,48 +28,31 @@ app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB upload limit
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", ns_configured=check_credentials())
 
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "ns_configured": check_credentials()})
 
 
 @app.route("/pull", methods=["POST"])
 def pull():
-    """
-    Pull data from NetSuite, run processing, return JSON preview.
-    Body: {account_id, email, password, month, year}
-    """
+    """Pull from NetSuite via TBA, return JSON preview."""
     data = request.get_json(force=True)
-    account_id = data.get("account_id", "").strip()
-    email = data.get("email", "").strip()
-    password = data.get("password", "")
     month = int(data.get("month", datetime.date.today().month))
-    year = int(data.get("year", datetime.date.today().year))
-
-    if not account_id or not email or not password:
-        return jsonify({"error": "account_id, email, and password are required."}), 400
+    year  = int(data.get("year",  datetime.date.today().year))
 
     try:
-        invoice_csv, credit_csv = pull_netsuite_data(account_id, email, password)
+        invoices, credits = pull_netsuite_data()
+        accounts = process_collections(invoices, credits, month, year)
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.exception("Unexpected error pulling from NetSuite")
         return jsonify({"error": f"Unexpected error: {e}"}), 500
 
-    try:
-        invoices = parse_invoices(invoice_csv)
-        credits = parse_credits(credit_csv)
-        accounts = process_collections(invoices, credits, month, year)
-    except Exception as e:
-        logger.exception("Error processing NetSuite data")
-        return jsonify({"error": f"Processing error: {e}"}), 500
-
-    preview = _build_preview(accounts, month, year)
-    return jsonify(preview)
+    return jsonify(_build_preview(accounts, month, year))
 
 
 @app.route("/generate", methods=["POST"])
@@ -79,29 +61,25 @@ def generate():
     Generate and return the XLSX file.
     Accepts either:
       (a) multipart form with invoice_file + credits_file + month + year
-      (b) JSON with account_id + email + password + month + year
+      (b) JSON with {source: "netsuite", month, year}
     """
-    # Determine input mode
     if request.content_type and "multipart/form-data" in request.content_type:
         return _generate_from_upload()
-    else:
-        return _generate_from_netsuite()
+    return _generate_from_netsuite()
 
 
 def _generate_from_upload():
     invoice_file = request.files.get("invoice_file")
     credits_file = request.files.get("credits_file")
     month = int(request.form.get("month", datetime.date.today().month))
-    year = int(request.form.get("year", datetime.date.today().year))
+    year  = int(request.form.get("year",  datetime.date.today().year))
 
     if not invoice_file or not credits_file:
         return jsonify({"error": "Both invoice_file and credits_file are required."}), 400
 
     try:
-        invoice_bytes = invoice_file.read()
-        credit_bytes = credits_file.read()
-        invoices = parse_invoices(invoice_bytes)
-        credits = parse_credits(credit_bytes)
+        invoices = parse_invoices(invoice_file.read())
+        credits  = parse_credits(credits_file.read())
         accounts = process_collections(invoices, credits, month, year)
         xlsx_bytes = build_workbook(accounts, month, year)
     except Exception as e:
@@ -112,27 +90,19 @@ def _generate_from_upload():
 
 
 def _generate_from_netsuite():
-    data = request.get_json(force=True)
-    account_id = data.get("account_id", "").strip()
-    email = data.get("email", "").strip()
-    password = data.get("password", "")
+    data  = request.get_json(force=True)
     month = int(data.get("month", datetime.date.today().month))
-    year = int(data.get("year", datetime.date.today().year))
-
-    if not account_id or not email or not password:
-        return jsonify({"error": "account_id, email, and password are required."}), 400
+    year  = int(data.get("year",  datetime.date.today().year))
 
     try:
-        invoice_csv, credit_csv = pull_netsuite_data(account_id, email, password)
-        invoices = parse_invoices(invoice_csv)
-        credits = parse_credits(credit_csv)
-        accounts = process_collections(invoices, credits, month, year)
+        invoices, credits = pull_netsuite_data()
+        accounts   = process_collections(invoices, credits, month, year)
         xlsx_bytes = build_workbook(accounts, month, year)
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.exception("Error generating report from NetSuite")
-        return jsonify({"error": f"Error: {e}"}), 500
+        return jsonify({"error": str(e)}), 500
 
     return _xlsx_response(xlsx_bytes, month, year)
 
@@ -150,23 +120,19 @@ def _xlsx_response(xlsx_bytes: bytes, month: int, year: int):
 
 def _build_preview(accounts, month, year):
     from collections import Counter
-    status_counts = Counter()
-    for a in accounts:
-        if a.section == "actionable":
-            status_counts[a.suggested_status] += 1
-
-    section_counts = {
-        "actionable": sum(1 for a in accounts if a.section == "actionable"),
-        "current_only": sum(1 for a in accounts if a.section == "current_only"),
-        "autopay": sum(1 for a in accounts if a.section == "autopay"),
-    }
-
+    status_counts = Counter(
+        a.suggested_status for a in accounts if a.section == "actionable"
+    )
     return {
         "status": "ok",
         "month": month,
         "year": year,
         "total_accounts": len(accounts),
-        "section_counts": section_counts,
+        "section_counts": {
+            "actionable":    sum(1 for a in accounts if a.section == "actionable"),
+            "current_only":  sum(1 for a in accounts if a.section == "current_only"),
+            "autopay":       sum(1 for a in accounts if a.section == "autopay"),
+        },
         "status_counts": dict(status_counts),
         "errors": [],
     }
