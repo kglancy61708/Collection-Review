@@ -109,12 +109,19 @@ def _build_auth_header(method: str, url: str, query_params: dict | None = None) 
     query_params: any URL query string parameters (e.g. {"limit": "1000", "offset": "0"})
     that must be included in the signature base string.
     """
+    # Read credentials live from os.environ so Railway vars are always current
+    consumer_key    = os.environ.get("NS_CONSUMER_KEY",    "")
+    consumer_secret = os.environ.get("NS_CONSUMER_SECRET", "")
+    token_id        = os.environ.get("NS_TOKEN_ID",        "")
+    token_secret    = os.environ.get("NS_TOKEN_SECRET",    "")
+    account_id      = os.environ.get("NS_ACCOUNT_ID",      "3412280")
+
     oauth_params: dict[str, str] = {
-        "oauth_consumer_key":     NS_CONSUMER_KEY,
+        "oauth_consumer_key":     consumer_key,
         "oauth_nonce":            uuid.uuid4().hex,
         "oauth_signature_method": "HMAC-SHA256",
         "oauth_timestamp":        str(int(time.time())),
-        "oauth_token":            NS_TOKEN_ID,
+        "oauth_token":            token_id,
         "oauth_version":          "1.0",
     }
 
@@ -143,7 +150,7 @@ def _build_auth_header(method: str, url: str, query_params: dict | None = None) 
     ])
 
     # Signing key
-    signing_key = f"{_pct_encode(NS_CONSUMER_SECRET)}&{_pct_encode(NS_TOKEN_SECRET)}"
+    signing_key = f"{_pct_encode(consumer_secret)}&{_pct_encode(token_secret)}"
 
     # HMAC-SHA256
     raw_sig = hmac.new(
@@ -154,7 +161,7 @@ def _build_auth_header(method: str, url: str, query_params: dict | None = None) 
     oauth_params["oauth_signature"] = base64.b64encode(raw_sig).decode()
 
     # Build header value — realm uses uppercase account ID
-    realm = NS_ACCOUNT_ID.upper().replace("-", "_")
+    realm = account_id.upper().replace("-", "_")
     header_parts = [f'realm="{realm}"'] + [
         f'{k}="{_pct_encode(v)}"'
         for k, v in sorted(oauth_params.items())
@@ -168,14 +175,18 @@ def _build_auth_header(method: str, url: str, query_params: dict | None = None) 
 
 def _suiteql_request(query: str, offset: int = 0) -> dict:
     """POST one page of a SuiteQL query. Retries on 429 with backoff."""
+    account_id = os.environ.get("NS_ACCOUNT_ID", "3412280")
+    suiteql_url = (
+        f"https://{account_id}.suitetalk.api.netsuite.com"
+        f"/services/rest/query/v1/suiteql"
+    )
     params = {"limit": str(PAGE_SIZE), "offset": str(offset)}
-    url = SUITEQL_URL  # query params go in the URL for the actual request
 
     for attempt in range(5):
-        auth = _build_auth_header("POST", SUITEQL_URL, query_params=params)
+        auth = _build_auth_header("POST", suiteql_url, query_params=params)
         try:
             resp = requests.post(
-                SUITEQL_URL,
+                suiteql_url,
                 params=params,
                 json={"q": query.strip()},
                 headers={
@@ -318,8 +329,13 @@ def _normalise_credit_rows(rows: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def check_credentials() -> bool:
-    """Return True if all required env vars are set."""
-    return all([NS_CONSUMER_KEY, NS_CONSUMER_SECRET, NS_TOKEN_ID, NS_TOKEN_SECRET])
+    """Return True if all required env vars are set. Reads os.environ live."""
+    return all([
+        os.environ.get("NS_CONSUMER_KEY", ""),
+        os.environ.get("NS_CONSUMER_SECRET", ""),
+        os.environ.get("NS_TOKEN_ID", ""),
+        os.environ.get("NS_TOKEN_SECRET", ""),
+    ])
 
 
 def pull_netsuite_data() -> tuple[list[dict], list[dict]]:
