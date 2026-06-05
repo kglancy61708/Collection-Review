@@ -7,6 +7,8 @@ import datetime
 import io
 import logging
 import os
+import threading
+import uuid
 
 from flask import Flask, jsonify, render_template, request, send_file
 
@@ -21,6 +23,29 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB upload limit
 
+# ---------------------------------------------------------------------------
+# In-memory job store for async NS pulls
+# (single-process; fine for Railway's single-replica deploy)
+# ---------------------------------------------------------------------------
+_jobs: dict[str, dict] = {}
+_jobs_lock = threading.Lock()
+
+
+def _set_job(job_id: str, **kwargs) -> None:
+    with _jobs_lock:
+        if job_id not in _jobs:
+            _jobs[job_id] = {}
+        _jobs[job_id].update(kwargs)
+
+
+def _get_job(job_id: str) -> dict | None:
+    with _jobs_lock:
+        return dict(_jobs.get(job_id, {}))
+
+
+# ---------------------------------------------------------------------------
+# Error handler
+# ---------------------------------------------------------------------------
 
 @app.errorhandler(Exception)
 def handle_exception(e):
@@ -55,28 +80,127 @@ def diagnose():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/pull", methods=["POST"])
-def pull():
-    """Pull from NetSuite via TBA, return JSON preview."""
+# ---------------------------------------------------------------------------
+# Async pull endpoints
+# ---------------------------------------------------------------------------
+
+def _run_pull_job(job_id: str, month: int, year: int) -> None:
+    """Background thread: pull NS data, process, store result in _jobs."""
+    try:
+        _set_job(job_id, status="running", message="Connecting to NetSuite…")
+        invoices, credits = pull_netsuite_data()
+        logger.info("Job %s: pull_netsuite_data returned %d invoices, %d credits",
+                    job_id, len(invoices), len(credits))
+
+        _set_job(job_id, message=f"Processing {len(invoices)} invoices…")
+        accounts = process_collections(invoices, credits, month, year)
+        logger.info("Job %s: process_collections returned %d accounts", job_id, len(accounts))
+
+        preview = _build_preview(accounts, month, year)
+        logger.info("Job %s: preview built OK", job_id)
+        _set_job(job_id, status="done", preview=preview)
+
+    except RuntimeError as e:
+        logger.error("Job %s RuntimeError: %s", job_id, e)
+        _set_job(job_id, status="error", error=str(e))
+    except Exception as e:
+        logger.exception("Job %s unexpected error", job_id)
+        _set_job(job_id, status="error", error=f"{type(e).__name__}: {e}")
+
+
+@app.route("/pull/start", methods=["POST"])
+def pull_start():
+    """Start a background NS pull. Returns {job_id} immediately."""
     data = request.get_json(force=True)
     month = int(data.get("month", datetime.date.today().month))
     year  = int(data.get("year",  datetime.date.today().year))
 
+    job_id = uuid.uuid4().hex
+    _set_job(job_id, status="pending", month=month, year=year)
+
+    t = threading.Thread(target=_run_pull_job, args=(job_id, month, year), daemon=True)
+    t.start()
+    logger.info("Started pull job %s for %d/%d", job_id, month, year)
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/pull/status/<job_id>")
+def pull_status(job_id: str):
+    """Poll for job status. Returns {status, preview?, error?, message?}."""
+    job = _get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    return jsonify(job)
+
+
+# Keep old /pull endpoint for backwards compatibility (still async internally)
+@app.route("/pull", methods=["POST"])
+def pull():
+    """Legacy pull endpoint — now delegates to async pull/start + immediate poll."""
+    return pull_start()
+
+
+# ---------------------------------------------------------------------------
+# Generate endpoints
+# ---------------------------------------------------------------------------
+
+def _run_generate_job(job_id: str, month: int, year: int) -> None:
+    """Background thread: pull + generate XLSX, store bytes in _jobs."""
     try:
+        _set_job(job_id, status="running", message="Pulling from NetSuite…")
         invoices, credits = pull_netsuite_data()
-        logger.info("pull_netsuite_data returned %d invoices, %d credits",
-                    len(invoices), len(credits))
-        accounts = process_collections(invoices, credits, month, year)
-        logger.info("process_collections returned %d accounts", len(accounts))
-        preview = _build_preview(accounts, month, year)
-        logger.info("preview built OK: %s", preview)
-        return jsonify(preview)
+        _set_job(job_id, message=f"Generating report for {len(invoices)} invoices…")
+        accounts   = process_collections(invoices, credits, month, year)
+        xlsx_bytes = build_workbook(accounts, month, year)
+        _set_job(job_id, status="done", xlsx=xlsx_bytes, month=month, year=year)
+        logger.info("Job %s: generate complete (%d bytes)", job_id, len(xlsx_bytes))
     except RuntimeError as e:
-        logger.error("RuntimeError in pull: %s", e)
-        return jsonify({"error": str(e)}), 400
+        logger.error("Job %s RuntimeError: %s", job_id, e)
+        _set_job(job_id, status="error", error=str(e))
     except Exception as e:
-        logger.exception("Unexpected error in pull")
-        return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
+        logger.exception("Job %s unexpected error", job_id)
+        _set_job(job_id, status="error", error=f"{type(e).__name__}: {e}")
+
+
+@app.route("/generate/start", methods=["POST"])
+def generate_start():
+    """Start async generate from NS. Returns {job_id}."""
+    data  = request.get_json(force=True)
+    month = int(data.get("month", datetime.date.today().month))
+    year  = int(data.get("year",  datetime.date.today().year))
+
+    job_id = uuid.uuid4().hex
+    _set_job(job_id, status="pending")
+    t = threading.Thread(target=_run_generate_job, args=(job_id, month, year), daemon=True)
+    t.start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/generate/status/<job_id>")
+def generate_status(job_id: str):
+    """Poll for generate job status."""
+    job = _get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    # Don't return xlsx bytes in status poll — just status/error/message
+    safe = {k: v for k, v in job.items() if k != "xlsx"}
+    return jsonify(safe)
+
+
+@app.route("/generate/download/<job_id>")
+def generate_download(job_id: str):
+    """Download the XLSX once the generate job is done."""
+    job = _get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    if job.get("status") == "error":
+        return jsonify({"error": job.get("error", "Unknown error")}), 500
+    if job.get("status") != "done":
+        return jsonify({"error": "Not ready yet"}), 202
+    xlsx_bytes = job.get("xlsx")
+    if not xlsx_bytes:
+        return jsonify({"error": "No file data"}), 500
+    return _xlsx_response(xlsx_bytes, job["month"], job["year"])
 
 
 @app.route("/generate", methods=["POST"])
@@ -114,6 +238,7 @@ def _generate_from_upload():
 
 
 def _generate_from_netsuite():
+    """Synchronous NS generate — kept for upload path compatibility."""
     data  = request.get_json(force=True)
     month = int(data.get("month", datetime.date.today().month))
     year  = int(data.get("year",  datetime.date.today().year))

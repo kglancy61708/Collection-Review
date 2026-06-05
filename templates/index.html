@@ -252,61 +252,101 @@ function hideInlineError(elId) {
 })();
 
 // ---------------------------------------------------------------------------
-// Pull & Preview (TBA — no credentials needed in UI)
+// Async job poller — polls /pull/status/<id> or /generate/... until done
+// ---------------------------------------------------------------------------
+async function pollJob(jobId, statusUrl, intervalMs, onMessage) {
+  return new Promise((resolve, reject) => {
+    const timer = setInterval(async () => {
+      try {
+        const r = await fetch(statusUrl);
+        let d;
+        try { d = await r.json(); } catch { d = {}; }
+        if (d.status === 'done') {
+          clearInterval(timer);
+          resolve(d);
+        } else if (d.status === 'error') {
+          clearInterval(timer);
+          reject(new Error(d.error || 'Unknown error'));
+        } else if (d.message && onMessage) {
+          onMessage(d.message);
+        }
+      } catch (e) {
+        clearInterval(timer);
+        reject(e);
+      }
+    }, intervalMs);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Pull & Preview (TBA — async: start job, poll for result)
 // ---------------------------------------------------------------------------
 $('btn-pull').addEventListener('click', async () => {
   hideInlineError('ns-error');
   const month = parseInt($('report-month').value);
   const year  = parseInt($('report-year').value);
 
-  showLoading('Connecting to NetSuite via TBA and pulling data…');
+  showLoading('Connecting to NetSuite via TBA…');
   try {
-    const resp = await fetch('/pull', {
+    // Start the job
+    const startResp = await fetch('/pull/start', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({month, year}),
     });
-    let data;
-    try { data = await resp.json(); }
-    catch { data = {error: `Server returned non-JSON (HTTP ${resp.status}) — check Railway logs.`}; }
-    if (!resp.ok || data.error) {
-      showInlineError('ns-error',
-        (data.error || `HTTP ${resp.status} — no error detail`) +
-        (resp.ok ? '' : ` [HTTP ${resp.status}]`));
+    let startData;
+    try { startData = await startResp.json(); } catch { startData = {}; }
+    if (!startResp.ok || startData.error) {
+      showInlineError('ns-error', startData.error || `HTTP ${startResp.status}`);
       return;
     }
-    renderPreview(data);
+    const jobId = startData.job_id;
+
+    // Poll until done
+    const result = await pollJob(
+      jobId,
+      `/pull/status/${jobId}`,
+      3000,
+      msg => showLoading(msg)
+    );
+    renderPreview(result.preview);
   } catch (e) {
-    showInlineError('ns-error', 'Network error: ' + e.message);
+    showInlineError('ns-error', e.message || 'Unknown error during pull.');
   } finally {
     hideLoading();
   }
 });
 
 // ---------------------------------------------------------------------------
-// Generate from NetSuite (TBA)
+// Generate from NetSuite (TBA — async)
 // ---------------------------------------------------------------------------
 $('btn-generate-ns').addEventListener('click', async () => {
   hideInlineError('ns-error');
   const month = parseInt($('report-month').value);
   const year  = parseInt($('report-year').value);
 
-  showLoading('Pulling from NetSuite and generating report…');
+  showLoading('Starting NetSuite report generation…');
   try {
-    const resp = await fetch('/generate', {
+    const startResp = await fetch('/generate/start', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({month, year}),
     });
-    if (!resp.ok) {
-      const data = await resp.json().catch(() => ({}));
-      showInlineError('ns-error', data.error || 'Failed to generate report.');
+    let startData;
+    try { startData = await startResp.json(); } catch { startData = {}; }
+    if (!startResp.ok || startData.error) {
+      showInlineError('ns-error', startData.error || `HTTP ${startResp.status}`);
       return;
     }
-    await downloadBlob(resp);
+    const jobId = startData.job_id;
+
+    // Poll until done, then download
+    await pollJob(jobId, `/generate/status/${jobId}`, 3000, msg => showLoading(msg));
+    // Download via direct link
+    window.location.href = `/generate/download/${jobId}`;
     showSuccess('Report generated and downloaded successfully.');
   } catch (e) {
-    showInlineError('ns-error', 'Network error: ' + e.message);
+    showInlineError('ns-error', e.message || 'Unknown error during generate.');
   } finally {
     hideLoading();
   }

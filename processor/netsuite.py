@@ -192,7 +192,7 @@ def _suiteql_request(query: str, offset: int = 0) -> dict:
                     "Content-Type":  "application/json",
                     "prefer":        "transient",
                 },
-                timeout=60,
+                timeout=(15, 90),  # (connect timeout, read timeout) in seconds
             )
         except requests.RequestException as e:
             raise RuntimeError(f"Network error calling SuiteQL: {e}")
