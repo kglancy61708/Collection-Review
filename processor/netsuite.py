@@ -229,10 +229,15 @@ def _suiteql_request(query: str, offset: int = 0) -> dict:
 # Paginated query runner
 # ---------------------------------------------------------------------------
 
-def _run_query(query: str, label: str) -> list[dict]:
-    """Run a paginated SuiteQL query, return all rows as list of dicts."""
+def _run_query(query: str, label: str,
+               progress_cb=None) -> list[dict]:
+    """
+    Run a paginated SuiteQL query, return all rows as list of dicts.
+    progress_cb(message: str) is called after each page if provided.
+    """
     rows: list[dict] = []
     offset = 0
+    total = None
 
     while True:
         logger.info("Fetching %s rows %d–%d…", label, offset, offset + PAGE_SIZE)
@@ -241,9 +246,14 @@ def _run_query(query: str, label: str) -> list[dict]:
         items = data.get("items", [])
         rows.extend(items)
 
-        total = data.get("totalResults", len(rows))
-        offset += PAGE_SIZE
+        if total is None:
+            total = data.get("totalResults", 0)
 
+        if progress_cb and total:
+            pct = min(100, int(len(rows) / total * 100))
+            progress_cb(f"Downloading {label}: {len(rows):,} / {total:,} rows ({pct}%)…")
+
+        offset += PAGE_SIZE
         if offset >= total or not items:
             break
 
@@ -369,7 +379,7 @@ def diagnose() -> dict:
     return results
 
 
-def pull_netsuite_data() -> tuple[list[dict], list[dict]]:
+def pull_netsuite_data(progress_cb=None) -> tuple[list[dict], list[dict]]:
     """
     Pull open invoices and credits from NetSuite via SuiteQL.
     Returns (invoice_rows, credit_rows) as normalised dicts ready for
@@ -384,8 +394,8 @@ def pull_netsuite_data() -> tuple[list[dict], list[dict]]:
             "NS_TOKEN_SECRET as environment variables on your Railway service."
         )
 
-    raw_invoices = _run_query(_build_invoice_query(), "invoices")
-    raw_credits  = _run_query(_build_credit_query(), "credits")
+    raw_invoices = _run_query(_build_invoice_query(), "invoices", progress_cb=progress_cb)
+    raw_credits  = _run_query(_build_credit_query(),  "credits",  progress_cb=progress_cb)
 
     invoices = _normalise_invoice_rows(raw_invoices)
     credits  = _normalise_credit_rows(raw_credits)

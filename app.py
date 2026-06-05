@@ -88,7 +88,11 @@ def _run_pull_job(job_id: str, month: int, year: int) -> None:
     """Background thread: pull NS data, process, store result in _jobs."""
     try:
         _set_job(job_id, status="running", message="Connecting to NetSuite…")
-        invoices, credits = pull_netsuite_data()
+
+        def progress(msg: str):
+            _set_job(job_id, message=msg)
+
+        invoices, credits = pull_netsuite_data(progress_cb=progress)
         logger.info("Job %s: pull_netsuite_data returned %d invoices, %d credits",
                     job_id, len(invoices), len(credits))
 
@@ -150,7 +154,11 @@ def _run_generate_job(job_id: str, month: int, year: int) -> None:
     """Background thread: pull + generate XLSX, store bytes in _jobs."""
     try:
         _set_job(job_id, status="running", message="Pulling from NetSuite…")
-        invoices, credits = pull_netsuite_data()
+
+        def progress(msg: str):
+            _set_job(job_id, message=msg)
+
+        invoices, credits = pull_netsuite_data(progress_cb=progress)
         _set_job(job_id, message=f"Generating report for {len(invoices)} invoices…")
         accounts   = process_collections(invoices, credits, month, year)
         xlsx_bytes = build_workbook(accounts, month, year)
