@@ -309,7 +309,13 @@ $('btn-pull').addEventListener('click', async () => {
       3000,
       msg => showLoading(msg)
     );
-    renderPreview(result.preview);
+    const preview = result.preview || result;  // handle flat or nested response
+    if (!preview || !preview.section_counts) {
+      showInlineError('ns-error',
+        'Pull completed but returned no data. NetSuite may have returned 0 invoices — check Railway logs for details.');
+      return;
+    }
+    renderPreview(preview);
   } catch (e) {
     showInlineError('ns-error', e.message || 'Unknown error during pull.');
   } finally {

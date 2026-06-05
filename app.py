@@ -97,8 +97,10 @@ def _run_pull_job(job_id: str, month: int, year: int) -> None:
         logger.info("Job %s: process_collections returned %d accounts", job_id, len(accounts))
 
         preview = _build_preview(accounts, month, year)
-        logger.info("Job %s: preview built OK", job_id)
-        _set_job(job_id, status="done", preview=preview)
+        logger.info("Job %s: preview built: %s", job_id, preview)
+        # Store atomically — status+preview in one update so poll never sees done without preview
+        with _jobs_lock:
+            _jobs.setdefault(job_id, {}).update({"status": "done", "preview": preview})
 
     except RuntimeError as e:
         logger.error("Job %s RuntimeError: %s", job_id, e)
