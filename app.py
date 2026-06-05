@@ -93,8 +93,10 @@ def _run_pull_job(job_id: str, month: int, year: int) -> None:
             _set_job(job_id, message=msg)
 
         invoices, credits = pull_netsuite_data(progress_cb=progress)
-        logger.info("Job %s: pull_netsuite_data returned %d invoices, %d credits",
+        logger.info("Job %s: pull returned %d invoices, %d credits",
                     job_id, len(invoices), len(credits))
+        if not credits:
+            logger.warning("Job %s: 0 credits returned — credit totals will be blank", job_id)
 
         _set_job(job_id, message=f"Processing {len(invoices)} invoices…")
         accounts = process_collections(invoices, credits, month, year)

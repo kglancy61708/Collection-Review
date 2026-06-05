@@ -363,6 +363,8 @@ def diagnose() -> dict:
         ("custinvc_count",       "SELECT COUNT(*) AS cnt FROM transaction WHERE type = 'CustInvc'"),
         ("custinvc_any_amount",  "SELECT COUNT(*) AS cnt FROM transaction WHERE type = 'CustInvc' AND COALESCE(foreignamountunpaid, 0) > 0"),
         ("custcred_count",       "SELECT COUNT(*) AS cnt FROM transaction WHERE type = 'CustCred'"),
+        ("custcred_open",        "SELECT COUNT(*) AS cnt FROM transaction WHERE type = 'CustCred' AND ABS(COALESCE(foreignamountunpaid,0)) > 0"),
+        ("custcred_sample",      "SELECT foreignamountunpaid FROM transaction WHERE type = 'CustCred' AND ROWNUM <= 5"),
         ("customer_count",       "SELECT COUNT(*) AS cnt FROM customer"),
     ]
 
