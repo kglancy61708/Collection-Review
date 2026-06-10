@@ -406,8 +406,17 @@ def _compute_future_restriction(account: AccountSummary) -> str:
     if is_long_leash and oldest in ("90+", "120+", "150+", "180+") and total_aged >= 25.0:
         return "Warning"
 
-    if is_regular and oldest in ("60+", "90+", "120+", "150+", "180+") and total_aged >= 25.0:
-        return "Warning"
+    if is_regular:
+        # Tiered restriction warning thresholds:
+        #   60+ DSO: $100+ total aged balance
+        #   90+ DSO: $50+  total aged balance
+        #   120+/150+/180+ DSO: any balance
+        if oldest in ("120+", "150+", "180+") and total_aged > 0.01:
+            return "Warning"
+        elif oldest == "90+" and total_aged >= 50.0:
+            return "Warning"
+        elif oldest == "60+" and total_aged >= 100.0:
+            return "Warning"
 
     return ""
 
