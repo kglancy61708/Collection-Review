@@ -386,8 +386,17 @@ def _compute_future_restriction(account: AccountSummary) -> str:
     status = account.suggested_status
     total_aged = account.total_aged_balance
 
-    if escalation == "short leash" and total_aged > 0.01:
-        return "Short Leash"
+    if escalation == "short leash":
+        # Tiered restriction warning for short leash accounts:
+        #   30+ DSO: $100+ total aged balance
+        #   60+ DSO: $50+  total aged balance
+        #   90+/120+/150+/180+ DSO: any balance
+        if oldest in ("90+", "120+", "150+", "180+") and total_aged > 0.01:
+            return "Short Leash"
+        elif oldest == "60+" and total_aged >= 50.0:
+            return "Short Leash"
+        elif oldest == "30+" and total_aged >= 100.0:
+            return "Short Leash"
 
     cat_lower = account.category.strip().lower()
     is_sar = "service and repair" in cat_lower or cat_lower == "service & repair"
@@ -400,8 +409,17 @@ def _compute_future_restriction(account: AccountSummary) -> str:
     oldest = account.oldest_bucket_with_balance
     aged_buckets_set = set(AGED_BUCKETS)
 
-    if is_sar and oldest in aged_buckets_set and total_aged >= 25.0:
-        return "Warning"
+    if is_sar:
+        # Tiered restriction warning for SAR accounts:
+        #   30+ DSO: $100+ total aged balance
+        #   60+ DSO: $50+  total aged balance
+        #   90+/120+/150+/180+ DSO: any balance
+        if oldest in ("90+", "120+", "150+", "180+") and total_aged > 0.01:
+            return "Warning"
+        elif oldest == "60+" and total_aged >= 50.0:
+            return "Warning"
+        elif oldest == "30+" and total_aged >= 100.0:
+            return "Warning"
 
     if is_long_leash and oldest in ("90+", "120+", "150+", "180+") and total_aged >= 25.0:
         return "Warning"
