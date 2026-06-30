@@ -128,6 +128,7 @@ class AccountSummary:
     account_restricted: str = ""
     future_restriction: str = ""
     fortis_autopay_enrollment: str = ""
+    prepaid_through_date: str = ""
 
     # Bucket balances (post-credit-waterfall)
     balances: dict = field(default_factory=lambda: {b: 0.0 for b in BUCKETS})
@@ -161,6 +162,14 @@ class AccountSummary:
         if self.balances["Current"] > 0.01:
             return "Current"
         return ""
+
+    @property
+    def prepaid_restriction_flag(self) -> bool:
+        """True when prepaid through 12/31/2026 AND qualifies for a restriction warning."""
+        if not self.future_restriction:
+            return False
+        d = _parse_date(self.prepaid_through_date)
+        return d == datetime.date(2026, 12, 31)
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +548,7 @@ def process_collections(
                 collection_escalation_status=inv.get("collection_escalation_status", ""),
                 account_restricted=inv.get("account_restricted", ""),
                 fortis_autopay_enrollment=inv.get("fortis_autopay_enrollment", ""),
+                prepaid_through_date=inv.get("prepaid_through_date", ""),
             )
 
         acc = account_map[ca]

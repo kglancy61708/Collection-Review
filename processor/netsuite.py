@@ -66,7 +66,8 @@ SELECT
 {col("NS_FIELD_IS_FINANCE_CHARGE",        "Is Finance Charge")},
 {col("NS_FIELD_COLLECTION_ESCALATION",    "Collection Escalation Status")},
 {col("NS_FIELD_FORTIS_AUTOPAY",           "Fortis Autopay Enrollment")},
-{col("NS_FIELD_ACCOUNT_RESTRICTED",       "Account Restricted", on_customer=True)}
+{col("NS_FIELD_ACCOUNT_RESTRICTED",       "Account Restricted", on_customer=True)},
+{col("NS_FIELD_PREPAID_THROUGH",         "Prepaid Through Date", on_customer=True)}
 FROM transaction t
 INNER JOIN customer c ON t.entity = c.id
 WHERE t.type = 'CustInvc'
@@ -296,6 +297,7 @@ def _normalise_invoice_rows(rows: list[dict]) -> list[dict]:
             "collection_escalation_status":  g("Collection Escalation Status"),
             "fortis_autopay_enrollment":     g("Fortis Autopay Enrollment"),
             "account_restricted":            g("Account Restricted"),
+            "prepaid_through_date":          g("Prepaid Through Date"),
         }
         if record["collect_as"]:
             result.append(record)

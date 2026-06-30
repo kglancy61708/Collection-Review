@@ -56,6 +56,8 @@ ESCALATION_COLORS = {
 FINANCE_CHARGE_HEADER_COLOR = ("4472C4", "FFFFFF")
 FINANCE_CHARGE_CELL_COLOR = "E8F0FE"
 
+PREPAID_RESTRICTION_BG = "BDD7EE"  # light blue — prepaid 12/31/2026 + restriction warning
+
 GREYSTAR_BG = "D9D9D9"
 AUTOPAY_BG = "F4B942"
 CURRENT_ONLY_BG = "F2F2F2"
@@ -237,6 +239,7 @@ def _write_data_row(ws, row_num: int, headers: list, row_data: dict, acc: Accoun
     is_autopay_section = acc.section == "autopay"
     is_current_only = acc.section == "current_only"
     has_credit_adj = bool(acc.credit_adjustment)
+    is_prepaid_restriction = acc.prepaid_restriction_flag
 
     for col_idx, h in enumerate(headers, 1):
         value = row_data.get(h)
@@ -246,8 +249,11 @@ def _write_data_row(ws, row_num: int, headers: list, row_data: dict, acc: Accoun
         if h in MONEY_COLUMNS and value is not None:
             cell.number_format = '"$"#,##0.00'
 
-        # Base row fill
-        if is_greystar:
+        # Base row fill — prepaid restriction overrides other section fills
+        if is_prepaid_restriction:
+            cell.fill = _make_fill(PREPAID_RESTRICTION_BG)
+            cell.font = _make_font(bold=True)
+        elif is_greystar:
             cell.fill = _make_fill(GREYSTAR_BG)
             cell.font = _make_font(bold=True)
         elif is_autopay_section:
