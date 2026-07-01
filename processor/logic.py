@@ -241,14 +241,14 @@ def _derive_status(account: AccountSummary) -> str:
     if orig_status.lower() == "special circumstances":
         return "Special Circumstances"
 
-    # 3. Sales full group
-    if _is_sales_full(account.collect_as):
-        return "Call Customer"
-
     # Check if there's any aged balance
     oldest = account.oldest_bucket_with_balance
     if not oldest or oldest == "Current":
         return "No Action"
+
+    # 3. Sales full group (only when aged balance exists)
+    if _is_sales_full(account.collect_as):
+        return "Call Customer"
 
     cat_lower = category.lower()
     is_maintenance = "maintenance" in cat_lower
@@ -293,8 +293,8 @@ def _derive_status(account: AccountSummary) -> str:
         else:
             status = "No Action"
 
-    # 6. Short Leash escalation (advance one tier)
-    if escalation.lower() == "short leash":
+    # 6. Short Leash escalation (advance one tier) — skip if already escalated via SAR
+    if escalation.lower() == "short leash" and not is_sar:
         status = _escalate_status(status)
 
     # 7. Service And Repair — advance one tier
@@ -468,7 +468,7 @@ def assign_reps(accounts: list[AccountSummary]) -> None:
         a for a in accounts
         if a.section == "actionable"
         and a.collections_assignment == ""
-        and a.suggested_status not in ("No Action", "Special Circumstances")
+        and a.suggested_status not in ("No Action", "Special Circumstances", "Friendly Reminder Email")
         and not a.is_autopay
         and not _is_greystar(a.collect_as)
         and not _is_sales_full(a.collect_as)
@@ -616,8 +616,9 @@ def process_collections(
         # Determine suggested status
         acc.suggested_status = _derive_status(acc)
 
-        # Sales override: Call Customer
-        if _is_sales_full(acc.collect_as) or _is_sales_dominium(acc.collect_as):
+        # Sales override: Call Customer (only when aged balance exists)
+        if (_is_sales_full(acc.collect_as) or _is_sales_dominium(acc.collect_as)) \
+                and acc.total_aged_balance > 0.01:
             acc.suggested_status = "Call Customer"
 
         # Compute future restriction

@@ -64,7 +64,7 @@ SELECT
 {category_col},
 {col("NS_FIELD_COLLECTIONS_STATUS",       "Collections Status")},
 {col("NS_FIELD_IS_FINANCE_CHARGE",        "Is Finance Charge")},
-{col("NS_FIELD_COLLECTION_ESCALATION",    "Collection Escalation Status")},
+{col("NS_FIELD_COLLECTION_ESCALATION",    "Collection Escalation Status", on_customer=True)},
 {col("NS_FIELD_FORTIS_AUTOPAY",           "Fortis Autopay Enrollment")},
 {col("NS_FIELD_ACCOUNT_RESTRICTED",       "Account Restricted", on_customer=True)},
 {col("NS_FIELD_PREPAID_THROUGH",         "Prepaid Through Date", on_customer=True)}
