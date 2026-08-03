@@ -151,6 +151,10 @@ class AccountSummary:
         return sum(self.balances[b] for b in BUCKETS if b != "Future")
 
     @property
+    def total_raw_balance(self) -> float:
+        return sum(self.raw_balances[b] for b in BUCKETS if b != "Future")
+
+    @property
     def total_aged_balance(self) -> float:
         return sum(self.balances[b] for b in AGED_BUCKETS)
 
@@ -594,7 +598,12 @@ def process_collections(
         amt = cr.get("amount_remaining", 0.0)
         credit_map.setdefault(ca, []).append(amt)
 
-    # --- Apply credit waterfall ---
+    # --- Save raw balances before credit waterfall ---
+    for acc in account_map.values():
+        for b in BUCKETS:
+            acc.raw_balances[b] = acc.balances[b]
+
+    # --- Apply credit waterfall (modifies balances; raw_balances unchanged) ---
     for ca, acc in account_map.items():
         if ca in credit_map:
             apply_credit_waterfall(acc, credit_map[ca])
@@ -603,9 +612,6 @@ def process_collections(
     accounts = list(account_map.values())
 
     for acc in accounts:
-        # Save raw balances (pre-waterfall for reference)
-        for b in BUCKETS:
-            acc.raw_balances[b] = acc.balances[b]  # at this point balances are post-waterfall
 
         # Determine suggested status
         acc.suggested_status = _derive_status(acc)
