@@ -376,6 +376,12 @@ def apply_credit_waterfall(account: AccountSummary, credits: list[float]) -> Non
 # Future restriction logic
 # ---------------------------------------------------------------------------
 
+def _balance_at_or_above(account: AccountSummary, bucket: str) -> float:
+    """Sum of balances in `bucket` and all older buckets. Finance Charges excluded."""
+    idx = AGED_BUCKETS.index(bucket)
+    return sum(account.balances[b] for b in AGED_BUCKETS[idx:])
+
+
 def _compute_future_restriction(account: AccountSummary) -> str:
     ca = account.collect_as
 
@@ -392,20 +398,23 @@ def _compute_future_restriction(account: AccountSummary) -> str:
         return "Sales"
 
     escalation = account.collection_escalation_status.strip().lower()
-    status = account.suggested_status
-    total_aged = account.total_aged_balance
     oldest = account.oldest_bucket_with_balance
 
+    if not oldest or oldest == "Current":
+        return ""
+
+    # Balance at the threshold bucket and older only (not newer buckets, not Finance Charges)
+    bal = _balance_at_or_above(account, oldest)
+
+    if account.credit_adjustment and account.total_aged_balance <= 0.01:
+        return ""  # Cleared — credits eliminated all aged balance
+
     if escalation == "short leash":
-        # Tiered restriction warning for short leash accounts:
-        #   30+ DSO: $100+ total aged balance
-        #   60+ DSO: $50+  total aged balance
-        #   90+/120+/150+/180+ DSO: any balance
-        if oldest in ("90+", "120+", "150+", "180+") and total_aged > 0.01:
+        if oldest in ("90+", "120+", "150+", "180+") and bal > 0.01:
             return "Short Leash"
-        elif oldest == "60+" and total_aged >= 50.0:
+        elif oldest == "60+" and bal >= 50.0:
             return "Short Leash"
-        elif oldest == "30+" and total_aged >= 100.0:
+        elif oldest == "30+" and bal >= 100.0:
             return "Short Leash"
 
     cat_lower = account.category.strip().lower()
@@ -413,43 +422,28 @@ def _compute_future_restriction(account: AccountSummary) -> str:
     is_long_leash = escalation == "long leash"
     is_regular = escalation in ("regular", "normal", "")
 
-    if account.credit_adjustment and account.total_aged_balance <= 0.01:
-        return ""  # Cleared — credits eliminated all aged balance
-
     if is_sar:
-        # Tiered restriction warning for SAR accounts:
-        #   30+ DSO: $100+ total aged balance
-        #   60+ DSO: $50+  total aged balance
-        #   90+/120+/150+/180+ DSO: any balance
-        if oldest in ("90+", "120+", "150+", "180+") and total_aged > 0.01:
+        if oldest in ("90+", "120+", "150+", "180+") and bal > 0.01:
             return "Warning"
-        elif oldest == "60+" and total_aged >= 50.0:
+        elif oldest == "60+" and bal >= 50.0:
             return "Warning"
-        elif oldest == "30+" and total_aged >= 100.0:
+        elif oldest == "30+" and bal >= 100.0:
             return "Warning"
 
     if is_long_leash:
-        # Tiered restriction warning for long leash accounts:
-        #   90+ DSO:       $100+ total aged balance
-        #   120+ DSO:      $50+  total aged balance
-        #   150+/180+ DSO: any balance
-        if oldest in ("150+", "180+") and total_aged > 0.01:
+        if oldest in ("150+", "180+") and bal > 0.01:
             return "Warning"
-        elif oldest == "120+" and total_aged >= 50.0:
+        elif oldest == "120+" and bal >= 50.0:
             return "Warning"
-        elif oldest == "90+" and total_aged >= 100.0:
+        elif oldest == "90+" and bal >= 100.0:
             return "Warning"
 
     if is_regular:
-        # Tiered restriction warning thresholds:
-        #   60+ DSO: $100+ total aged balance
-        #   90+ DSO: $50+  total aged balance
-        #   120+/150+/180+ DSO: any balance
-        if oldest in ("120+", "150+", "180+") and total_aged > 0.01:
+        if oldest in ("120+", "150+", "180+") and bal > 0.01:
             return "Warning"
-        elif oldest == "90+" and total_aged >= 50.0:
+        elif oldest == "90+" and bal >= 50.0:
             return "Warning"
-        elif oldest == "60+" and total_aged >= 100.0:
+        elif oldest == "60+" and bal >= 100.0:
             return "Warning"
 
     return ""
