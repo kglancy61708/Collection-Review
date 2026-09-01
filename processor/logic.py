@@ -378,6 +378,9 @@ def _compute_future_restriction(account: AccountSummary) -> str:
     if account.is_autopay:
         return ""
 
+    if account.account_restricted.strip().lower() == "yes":
+        return ""
+
     if _is_withheld(ca) or _is_greystar(ca):
         return "Withheld"
 
