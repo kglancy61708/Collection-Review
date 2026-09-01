@@ -30,8 +30,6 @@ STATUS_SEVERITY = {
 }
 
 # Special account group patterns (lowercase match)
-SALES_FULL = ["decron properties", "bridge property management", "richdale group"]
-SALES_PARTIAL = ["dominium management services"]
 GREYSTAR = "greystar management"
 WITHHELD_CODES = ["10uni100", "10uni101", "10leg300"]
 
@@ -203,14 +201,6 @@ def _in_group(collect_as: str, patterns: list[str]) -> bool:
     return any(p in ca_lower for p in patterns)
 
 
-def _is_sales_full(collect_as: str) -> bool:
-    return _in_group(collect_as, SALES_FULL)
-
-
-def _is_sales_dominium(collect_as: str) -> bool:
-    return _in_group(collect_as, SALES_PARTIAL)
-
-
 def _is_greystar(collect_as: str) -> bool:
     return GREYSTAR in collect_as.lower()
 
@@ -249,10 +239,6 @@ def _derive_status(account: AccountSummary) -> str:
     oldest = account.oldest_bucket_with_balance
     if not oldest or oldest == "Current":
         return "No Action"
-
-    # 3. Sales full group (only when aged balance exists)
-    if _is_sales_full(account.collect_as):
-        return "Call Customer"
 
     cat_lower = category.lower()
     is_maintenance = "maintenance" in cat_lower
@@ -395,12 +381,6 @@ def _compute_future_restriction(account: AccountSummary) -> str:
     if _is_withheld(ca) or _is_greystar(ca):
         return "Withheld"
 
-    if _is_sales_full(ca):
-        return "Sales"
-
-    if _is_sales_dominium(ca):
-        return "Sales"
-
     escalation = account.collection_escalation_status.strip().lower()
     oldest = account.oldest_bucket_with_balance
 
@@ -469,7 +449,6 @@ def assign_reps(accounts: list[AccountSummary]) -> None:
         and a.suggested_status not in ("No Action", "Special Circumstances", "Friendly Reminder Email")
         and not a.is_autopay
         and not _is_greystar(a.collect_as)
-        and not _is_sales_full(a.collect_as)
     ]
 
     # Group by first word of collect_as
@@ -484,10 +463,8 @@ def assign_reps(accounts: list[AccountSummary]) -> None:
     rosas_accounts: list[AccountSummary] = []
     quilantan_accounts: list[AccountSummary] = []
 
-    # Dominium → could go to either; try to keep roughly equal
     for prefix in sorted_prefixes:
         group = prefix_groups[prefix]
-        # Check if this prefix includes dominium
         rep_choice = _pick_rep_for_group(group, rosas_accounts, quilantan_accounts)
         for a in group:
             a.collections_assignment = rep_choice
@@ -616,11 +593,6 @@ def process_collections(
         # Determine suggested status
         acc.suggested_status = _derive_status(acc)
 
-        # Sales override: Call Customer (only when aged balance exists)
-        if (_is_sales_full(acc.collect_as) or _is_sales_dominium(acc.collect_as)) \
-                and acc.total_aged_balance > 0.01:
-            acc.suggested_status = "Call Customer"
-
         # Compute future restriction
         acc.future_restriction = _compute_future_restriction(acc)
 
@@ -631,8 +603,6 @@ def process_collections(
             # Maintenance Cancel NP → Wharton
             if "maintenance" in acc.category.lower():
                 acc.collections_assignment = "Wharton, Nancy"
-        elif _is_sales_full(acc.collect_as):
-            acc.collections_assignment = ""  # Unassigned (Sales)
         elif _is_greystar(acc.collect_as):
             acc.collections_assignment = ""
 

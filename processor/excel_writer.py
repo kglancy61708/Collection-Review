@@ -398,8 +398,6 @@ def _write_summary_sheet(ws, accounts, report_month, report_year, month_name):
         "Maintenance 90+/120+/150+/180+: Cancel NP → Wharton, Nancy",
         "Special Circumstances: Retain status → Wharton, Nancy",
         "Autopay: No collection action; aged balance shown in Autopay section",
-        "Decron/Bridge/Richdale: Call Customer, Sales (green), Unassigned",
-        "Dominium: Call Customer, Sales (green), Rosas or Quilantan",
         "Greystar: Normal bucket status, Withheld (grey), bold+grey row, Unassigned",
     ]
     for rule in rules:
