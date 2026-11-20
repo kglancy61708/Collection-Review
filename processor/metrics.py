@@ -108,15 +108,15 @@ def compute_metrics(
         if ntype == "Letter":
             letter_note_counts[rep][aid] = letter_note_counts[rep].get(aid, 0) + 1
 
-    # Email index: email_counts[rep][acct_id] = count
-    email_counts: dict[str, dict[str, int]] = {r: {} for r in REPS}
+    # Email index: keyed by account ID only (not per-rep author) so emails count
+    # correctly even when m.author uses a shared mailbox or different name format.
+    email_counts_global: dict[str, int] = {}
     for m in messages:
-        rep  = _to_last_first(m.get("author", "").strip())
         cust = m.get("customer", "").strip()
-        if rep not in REPS:
+        aid  = _acct_id(cust)
+        if not aid:
             continue
-        aid = _acct_id(cust) or cust
-        email_counts[rep][aid] = email_counts[rep].get(aid, 0) + 1
+        email_counts_global[aid] = email_counts_global.get(aid, 0) + 1
 
     result: dict[str, list[dict]] = {}
 
@@ -134,8 +134,8 @@ def compute_metrics(
             creq, lreq = STATUS_GOALS.get(status, STATUS_GOALS.get(status_title, (2, None)))
 
             # Attempt counts — look up by account ID
-            nc    = phone_coll_counts[rep].get(aid, 0) if aid else 0
-            ec    = email_counts[rep].get(aid, 0)      if aid else 0
+            nc    = phone_coll_counts[rep].get(aid, 0)      if aid else 0
+            ec    = email_counts_global.get(aid, 0)          if aid else 0
             total = nc + ec
 
             # Letter evidence
