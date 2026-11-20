@@ -43,8 +43,14 @@ PAGE_SIZE = 1000  # NetSuite max rows per SuiteQL page
 # ---------------------------------------------------------------------------
 def _build_invoice_query() -> str:
     """Build the invoice SuiteQL query using live env var field IDs."""
+    # Hard-coded fallbacks — override with env vars if the field IDs ever change.
+    _FIELD_DEFAULTS = {
+        "NS_FIELD_COLLECTIONS_ASSIGNMENT":  "custentity223",
+        "NS_FIELD_COLLECTIONS_STATUS_CUST": "custentity241",
+    }
+
     def col(env_var: str, alias: str, on_customer: bool = False) -> str:
-        fid = os.environ.get(env_var, "")
+        fid = os.environ.get(env_var, _FIELD_DEFAULTS.get(env_var, ""))
         if fid:
             if on_customer:
                 return f'  BUILTIN.DF(c.{fid})  AS "{alias}"'

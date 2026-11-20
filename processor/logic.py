@@ -646,8 +646,10 @@ def process_collections(
     # --- Assign reps ---
     # If NS_FIELD_COLLECTIONS_ASSIGNMENT (custentity223) is configured, accounts
     # already have collections_assignment set from NetSuite — skip bin-packing.
+    # Only bin-pack when NetSuite returned zero assignments — even if only a subset of
+    # accounts are assigned (e.g. just Maria/Yoniva's portion), trust the NS data.
     ns_assigned = sum(1 for a in accounts if a.collections_assignment)
-    if ns_assigned < len(accounts) * 0.5:
+    if ns_assigned == 0:
         # Fewer than half have a NetSuite assignment → field not configured; use bin-packing
         assign_reps(accounts)
     # else: use the NetSuite assignments as-is
