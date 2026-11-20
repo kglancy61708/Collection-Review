@@ -212,6 +212,109 @@ def _summarise(rows: list[dict]) -> tuple[int, int, int, int, int, float]:
     return t, p, a, c, n, pct
 
 
+def metrics_to_json(
+    metrics_by_rep: dict[str, list[dict]],
+    month: int,
+    year: int,
+) -> dict:
+    """
+    Convert compute_metrics() output to a JSON-serialisable dict for on-screen display.
+    Returns:
+      {
+        month, year,
+        reps: [ { name, total, paid, active, compliant, non_compliant,
+                  compliance_pct, calls_notes, emails, reg_open_bal, fc_bal,
+                  rows: [...] } ],
+        status_breakdown: [ { status, total, paid, active, ... } ],
+        generated_at: "HH:MM"
+      }
+    """
+    import datetime as _dt
+
+    rep_summaries = []
+    all_rows: list[dict] = []
+
+    for rep in REPS:
+        rows = metrics_by_rep.get(rep, [])
+        all_rows.extend(rows)
+        t, p, a, c, n, pct = _summarise(rows)
+        reg_bal = sum(r["Regular Open Bal"] for r in rows if r["Paid / Current"] == "No")
+        fc_bal  = sum(r["Finance Charge Bal"] for r in rows if r["Paid / Current"] == "No")
+        calls   = sum(r["Calls (notes)"] for r in rows)
+        emails  = sum(r["Emails Sent"]   for r in rows)
+        rep_summaries.append({
+            "name":           rep,
+            "total":          t,
+            "paid":           p,
+            "active":         a,
+            "compliant":      c,
+            "non_compliant":  n,
+            "compliance_pct": pct,
+            "calls_notes":    calls,
+            "emails":         emails,
+            "reg_open_bal":   round(reg_bal, 2),
+            "fc_bal":         round(fc_bal,  2),
+            "rows":           rows,
+        })
+
+    # Status breakdown across both reps
+    from collections import defaultdict
+    sb: dict[str, dict] = defaultdict(lambda: {
+        "total": 0, "paid": 0, "active": 0,
+        "compliant": 0, "non_compliant": 0,
+        "calls_notes": 0, "emails": 0,
+        "reg_open_bal": 0.0, "fc_bal": 0.0,
+    })
+    for r in all_rows:
+        s = r["Status"]
+        sb[s]["total"] += 1
+        if r["Paid / Current"] == "Yes":
+            sb[s]["paid"] += 1
+        else:
+            sb[s]["active"] += 1
+            if r["Final Compliance"] == "Compliant":
+                sb[s]["compliant"] += 1
+            else:
+                sb[s]["non_compliant"] += 1
+        sb[s]["calls_notes"]  += r["Calls (notes)"]
+        sb[s]["emails"]       += r["Emails Sent"]
+        if r["Paid / Current"] == "No":
+            sb[s]["reg_open_bal"] += r["Regular Open Bal"]
+            sb[s]["fc_bal"]       += r["Finance Charge Bal"]
+
+    STATUS_ORDER = [
+        "Call Customer", "Skipped Invoice", "Collection Letter",
+        "Predemand Letter", "Cancel NP", "Cancel Np",
+        "Special Circumstances", "Friendly Reminder Email", "No Action",
+    ]
+    status_breakdown = []
+    for s in STATUS_ORDER:
+        if s in sb:
+            row = dict(sb[s])
+            row["status"] = s
+            row["compliance_pct"] = round(row["compliant"] / row["active"] * 100, 1) if row["active"] else 0.0
+            row["reg_open_bal"] = round(row["reg_open_bal"], 2)
+            row["fc_bal"]       = round(row["fc_bal"],       2)
+            status_breakdown.append(row)
+    # any statuses not in the order list
+    for s, data in sb.items():
+        if s not in STATUS_ORDER:
+            row = dict(data)
+            row["status"] = s
+            row["compliance_pct"] = round(row["compliant"] / row["active"] * 100, 1) if row["active"] else 0.0
+            row["reg_open_bal"] = round(row["reg_open_bal"], 2)
+            row["fc_bal"]       = round(row["fc_bal"],       2)
+            status_breakdown.append(row)
+
+    return {
+        "month":            month,
+        "year":             year,
+        "reps":             rep_summaries,
+        "status_breakdown": status_breakdown,
+        "generated_at":     _dt.datetime.now().strftime("%-I:%M %p") if hasattr(_dt.datetime.now(), 'strftime') else _dt.datetime.now().strftime("%H:%M"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Excel generation
 # ---------------------------------------------------------------------------

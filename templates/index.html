@@ -201,48 +201,133 @@
       <span class="badge bg-secondary ms-2" style="font-size:0.75rem;">Maria &amp; Yoniva</span>
     </div>
     <div class="card-body">
-      <p class="text-muted mb-3" style="font-size:0.9rem;">
-        Pulls live data from NetSuite (invoices, collections notes, emails) for the selected month
-        and generates a compliance metrics report for Maria Quilantan and Yoniva Rosas.
-      </p>
 
-      <div class="mb-3">
-        <label class="form-label fw-semibold" for="review-file">
-          Collections Review XLSX <span class="text-muted fw-normal">(required)</span>
-        </label>
-        <input class="form-control" type="file" id="review-file" accept=".xlsx">
-        <div class="form-text">Upload the Collections Review XLSX for this month. The rep assignments from that file are used as the account list — without it, assignments are re-computed from live data and will differ from the actual review.</div>
-      </div>
+      <!-- Step 1: Load Framework -->
+      <div id="metrics-setup">
+        <p class="text-muted mb-3" style="font-size:0.9rem;">
+          Upload the monthly Collections Review XLSX once to set the framework. Then refresh at any time to pull the latest NetSuite activity.
+        </p>
 
-      <div class="mb-3">
-        <label class="form-label fw-semibold" for="letterstream-file">
-          LetterStream Export <span class="text-muted fw-normal">(optional)</span>
-        </label>
-        <input class="form-control" type="file" id="letterstream-file" accept=".csv">
-        <div class="form-text">Upload the LetterStream activity CSV export to include letter confirmation in compliance checking.</div>
-      </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold" for="review-file">
+            Collections Review XLSX <span class="text-danger">*</span>
+          </label>
+          <input class="form-control" type="file" id="review-file" accept=".xlsx">
+        </div>
 
-      <div class="d-flex gap-2 align-items-center flex-wrap">
-        <button class="btn btn-primary px-4" id="btn-metrics" {% if not ns_configured %}disabled{% endif %}>
-          <i class="bi bi-graph-up me-1"></i> Run Metrics
+        <div class="mb-3">
+          <label class="form-label fw-semibold" for="letterstream-file">
+            LetterStream Export <span class="text-muted fw-normal">(optional)</span>
+          </label>
+          <input class="form-control" type="file" id="letterstream-file" accept=".csv">
+          <div class="form-text">Upload the LetterStream activity CSV to include letter confirmation.</div>
+        </div>
+
+        <button class="btn btn-primary px-4" id="btn-load-framework" {% if not ns_configured %}disabled{% endif %}>
+          <i class="bi bi-upload me-1"></i> Load Framework
         </button>
         {% if not ns_configured %}
-        <span class="text-muted small"><i class="bi bi-exclamation-circle me-1"></i>Requires NetSuite credentials</span>
+        <span class="text-muted small ms-2"><i class="bi bi-exclamation-circle me-1"></i>Requires NetSuite credentials</span>
         {% endif %}
+
+        <div id="framework-loading" class="mt-2" style="display:none;">
+          <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+          <span class="text-muted small ms-2">Loading…</span>
+        </div>
       </div>
 
-      <!-- Metrics progress -->
-      <div id="metrics-progress" class="mt-3" style="display:none;">
-        <div class="d-flex align-items-center gap-2">
-          <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-          <span id="metrics-progress-msg" class="text-muted small">Starting…</span>
+      <!-- Framework loaded banner -->
+      <div id="metrics-framework-banner" class="alert alert-success d-flex align-items-center justify-content-between mt-3" style="display:none !important;">
+        <div>
+          <i class="bi bi-check-circle-fill me-2"></i>
+          <strong id="framework-month-label"></strong> framework loaded —
+          <span id="framework-rep-counts"></span>
         </div>
-        <div class="progress mt-2" style="height:4px;">
-          <div class="progress-bar progress-bar-striped progress-bar-animated w-100"></div>
+        <button class="btn btn-sm btn-outline-secondary" id="btn-change-framework">Change</button>
+      </div>
+
+      <!-- Refresh button (shown after framework loaded) -->
+      <div id="metrics-refresh-panel" style="display:none;">
+        <div class="d-flex gap-2 align-items-center flex-wrap mt-3">
+          <button class="btn btn-success px-4" id="btn-refresh-metrics" {% if not ns_configured %}disabled{% endif %}>
+            <i class="bi bi-arrow-clockwise me-1"></i> Refresh Metrics
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" id="btn-upload-ls">
+            <i class="bi bi-file-earmark-text me-1"></i> Update LetterStream
+          </button>
+          <span id="ls-badge" class="text-muted small" style="display:none;"></span>
+        </div>
+
+        <div id="refresh-progress" class="mt-3" style="display:none;">
+          <div class="d-flex align-items-center gap-2">
+            <div class="spinner-border spinner-border-sm text-success" role="status"></div>
+            <span id="refresh-progress-msg" class="text-muted small">Starting…</span>
+          </div>
+          <div class="progress mt-2" style="height:4px;">
+            <div class="progress-bar bg-success progress-bar-striped progress-bar-animated w-100"></div>
+          </div>
         </div>
       </div>
 
       <div id="metrics-error" class="alert alert-danger mt-3" style="display:none;"></div>
+
+      <!-- Results panel -->
+      <div id="metrics-results" style="display:none;" class="mt-4">
+        <div class="d-flex justify-content-between align-items-baseline mb-2">
+          <h6 class="fw-bold mb-0" id="metrics-title"></h6>
+          <span class="text-muted small" id="metrics-generated-at"></span>
+        </div>
+
+        <p class="text-muted mb-3" style="font-size:0.8rem;">
+          Paid/Current = No Action / Friendly Reminder, zero balance, or all invoices below DSO threshold. Finance charges excluded. Attempts = Notes (Phone Call + Collection Note) + Emails.
+        </p>
+
+        <!-- Rep Summary Table -->
+        <div class="table-responsive mb-4">
+          <table class="table table-sm table-bordered" id="metrics-rep-table">
+            <thead class="table-dark">
+              <tr>
+                <th>Associate</th>
+                <th class="text-end">Total</th>
+                <th class="text-end">Paid / Current</th>
+                <th class="text-end">Unpaid Active</th>
+                <th class="text-end">Unpaid Compliant</th>
+                <th class="text-end">Unpaid Non-Compliant</th>
+                <th class="text-end">Compliance %</th>
+                <th class="text-end">Calls (notes)</th>
+                <th class="text-end">Emails Sent</th>
+                <th class="text-end">Regular Open Bal</th>
+                <th class="text-end">Finance Charge Bal</th>
+              </tr>
+            </thead>
+            <tbody id="metrics-rep-tbody"></tbody>
+          </table>
+        </div>
+
+        <!-- Status Breakdown -->
+        <h6 class="fw-bold mb-2">Status Breakdown — Combined</h6>
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered" id="metrics-status-table">
+            <thead class="table-dark">
+              <tr>
+                <th>Status</th>
+                <th class="text-end">Total</th>
+                <th class="text-end">Paid / Current</th>
+                <th class="text-end">Unpaid Active</th>
+                <th class="text-end">Unpaid Compliant</th>
+                <th class="text-end">Unpaid Non-Compliant</th>
+                <th class="text-end">Compliance %</th>
+                <th class="text-end">Calls (notes)</th>
+                <th class="text-end">Emails</th>
+                <th class="text-end">Regular Open Bal</th>
+                <th class="text-end">Finance Charge Bal</th>
+              </tr>
+            </thead>
+            <tbody id="metrics-status-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -523,29 +608,136 @@ function renderPreview(data) {
 }
 
 // ---------------------------------------------------------------------------
-// Metrics — Run button
+// Metrics — Framework + Refresh flow
 // ---------------------------------------------------------------------------
-$('btn-metrics').addEventListener('click', async () => {
+
+function fmt$(n) {
+  return '$' + (n || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+function fmtPct(n) {
+  return (n || 0).toFixed(1) + '%';
+}
+
+function showFrameworkLoaded(data) {
+  // Hide setup, show banner + refresh panel
+  $('metrics-setup').style.display = 'none';
+  const banner = $('metrics-framework-banner');
+  banner.style.display = '';
+  banner.style.removeProperty('display');  // override the !important hide
+  banner.classList.remove('d-none');
+  $('framework-month-label').textContent = data.month_name;
+  const rc = data.rep_counts || {};
+  const parts = Object.entries(rc).map(([k,v]) => `${k.split(',')[0].trim()} ${v}`);
+  $('framework-rep-counts').textContent = parts.join(' / ') + ` (${data.total_accounts} total)`;
+  $('metrics-refresh-panel').style.display = '';
+}
+
+// Check on load if a framework is already in memory on the server
+(async () => {
+  try {
+    const r = await fetch('/metrics/framework-status');
+    const d = await r.json();
+    if (d.loaded) {
+      showFrameworkLoaded(d);
+      if (d.letter_count) {
+        $('ls-badge').textContent = `${d.letter_count} LetterStream IDs loaded`;
+        $('ls-badge').style.display = '';
+      }
+    }
+  } catch {}
+})();
+
+// Load Framework button
+$('btn-load-framework').addEventListener('click', async () => {
   hideInlineError('metrics-error');
+  const rvFile = $('review-file').files[0];
+  if (!rvFile) {
+    showInlineError('metrics-error', 'Please select the Collections Review XLSX.');
+    return;
+  }
+
   const month = parseInt($('report-month').value);
   const year  = parseInt($('report-year').value);
-
   const formData = new FormData();
+  formData.append('review_file', rvFile);
   formData.append('month', month);
   formData.append('year', year);
-  const rvFile = $('review-file').files[0];
-  if (rvFile) formData.append('review_file', rvFile);
+
   const lsFile = $('letterstream-file').files[0];
   if (lsFile) formData.append('letterstream_file', lsFile);
 
-  $('btn-metrics').disabled = true;
-  $('metrics-progress').style.display = '';
-  $('metrics-progress-msg').textContent = 'Starting metrics job…';
+  $('btn-load-framework').disabled = true;
+  $('framework-loading').style.display = '';
 
   try {
-    const startResp = await fetch('/metrics/start', { method: 'POST', body: formData });
-    let startData;
-    try { startData = await startResp.json(); } catch { startData = {}; }
+    const resp = await fetch('/metrics/upload-framework', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (!resp.ok || data.error) {
+      showInlineError('metrics-error', data.error || `HTTP ${resp.status}`);
+      return;
+    }
+
+    // Also upload LetterStream if provided
+    if (lsFile) {
+      const lsForm = new FormData();
+      lsForm.append('letterstream_file', lsFile);
+      const lsResp = await fetch('/metrics/upload-letterstream', { method: 'POST', body: lsForm });
+      const lsData = await lsResp.json();
+      if (lsData.ok) {
+        $('ls-badge').textContent = `${lsData.letter_count} LetterStream IDs loaded`;
+        $('ls-badge').style.display = '';
+      }
+    }
+
+    showFrameworkLoaded(data);
+  } catch (e) {
+    showInlineError('metrics-error', e.message || 'Error loading framework.');
+  } finally {
+    $('btn-load-framework').disabled = false;
+    $('framework-loading').style.display = 'none';
+  }
+});
+
+// Change framework link
+$('btn-change-framework').addEventListener('click', () => {
+  $('metrics-setup').style.display = '';
+  $('metrics-framework-banner').style.display = 'none';
+  $('metrics-refresh-panel').style.display = 'none';
+  $('metrics-results').style.display = 'none';
+});
+
+// Update LetterStream
+$('btn-upload-ls').addEventListener('click', async () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.csv';
+  input.onchange = async () => {
+    const f = input.files[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append('letterstream_file', f);
+    try {
+      const r = await fetch('/metrics/upload-letterstream', { method: 'POST', body: fd });
+      const d = await r.json();
+      if (d.ok) {
+        $('ls-badge').textContent = `${d.letter_count} LetterStream IDs loaded`;
+        $('ls-badge').style.display = '';
+      }
+    } catch {}
+  };
+  input.click();
+});
+
+// Refresh Metrics button
+$('btn-refresh-metrics').addEventListener('click', async () => {
+  hideInlineError('metrics-error');
+  $('btn-refresh-metrics').disabled = true;
+  $('refresh-progress').style.display = '';
+  $('refresh-progress-msg').textContent = 'Starting…';
+
+  try {
+    const startResp = await fetch('/metrics/refresh/start', { method: 'POST' });
+    const startData = await startResp.json();
     if (!startResp.ok || startData.error) {
       showInlineError('metrics-error', startData.error || `HTTP ${startResp.status}`);
       return;
@@ -554,20 +746,79 @@ $('btn-metrics').addEventListener('click', async () => {
 
     await pollJob(
       jobId,
-      `/metrics/status/${jobId}`,
+      `/metrics/refresh/status/${jobId}`,
       3000,
-      msg => { $('metrics-progress-msg').textContent = msg; }
+      msg => { $('refresh-progress-msg').textContent = msg; }
     );
 
-    window.location.href = `/metrics/download/${jobId}`;
-    showSuccess('Metrics report generated and downloaded.');
+    // Fetch final result
+    const finalResp = await fetch(`/metrics/refresh/status/${jobId}`);
+    const finalData = await finalResp.json();
+    if (finalData.error) {
+      showInlineError('metrics-error', finalData.error);
+      return;
+    }
+    renderMetrics(finalData.result);
   } catch (e) {
-    showInlineError('metrics-error', e.message || 'Unknown error during metrics run.');
+    showInlineError('metrics-error', e.message || 'Error refreshing metrics.');
   } finally {
-    $('btn-metrics').disabled = false;
-    $('metrics-progress').style.display = 'none';
+    $('btn-refresh-metrics').disabled = false;
+    $('refresh-progress').style.display = 'none';
   }
 });
+
+function renderMetrics(data) {
+  const months = ['January','February','March','April','May','June',
+                  'July','August','September','October','November','December'];
+  $('metrics-title').textContent = `${months[data.month - 1]} ${data.year} — Collections Metrics Summary`;
+  $('metrics-generated-at').textContent = `Refreshed ${data.generated_at}`;
+
+  // Rep summary
+  const repTbody = $('metrics-rep-tbody');
+  repTbody.innerHTML = '';
+  for (const rep of data.reps) {
+    const tr = document.createElement('tr');
+    const name = rep.name.includes(',') ? rep.name.split(',').map(s=>s.trim()).reverse().join(' ') : rep.name;
+    tr.innerHTML = `
+      <td class="fw-semibold">${name}</td>
+      <td class="text-end">${rep.total}</td>
+      <td class="text-end text-success">${rep.paid}</td>
+      <td class="text-end">${rep.active}</td>
+      <td class="text-end text-success">${rep.compliant}</td>
+      <td class="text-end text-danger">${rep.non_compliant}</td>
+      <td class="text-end fw-semibold ${rep.compliance_pct >= 70 ? 'text-success' : 'text-danger'}">${fmtPct(rep.compliance_pct)}</td>
+      <td class="text-end">${rep.calls_notes}</td>
+      <td class="text-end">${rep.emails}</td>
+      <td class="text-end">${fmt$(rep.reg_open_bal)}</td>
+      <td class="text-end ${rep.fc_bal > 0 ? 'fst-italic text-primary' : ''}">${fmt$(rep.fc_bal)}</td>
+    `;
+    repTbody.appendChild(tr);
+  }
+
+  // Status breakdown
+  const stTbody = $('metrics-status-tbody');
+  stTbody.innerHTML = '';
+  for (const s of data.status_breakdown) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${s.status}</td>
+      <td class="text-end">${s.total}</td>
+      <td class="text-end text-success">${s.paid}</td>
+      <td class="text-end">${s.active}</td>
+      <td class="text-end text-success">${s.compliant}</td>
+      <td class="text-end text-danger">${s.non_compliant}</td>
+      <td class="text-end">${fmtPct(s.compliance_pct)}</td>
+      <td class="text-end">${s.calls_notes}</td>
+      <td class="text-end">${s.emails}</td>
+      <td class="text-end">${fmt$(s.reg_open_bal)}</td>
+      <td class="text-end ${s.fc_bal > 0 ? 'fst-italic text-primary' : ''}">${fmt$(s.fc_bal)}</td>
+    `;
+    stTbody.appendChild(tr);
+  }
+
+  $('metrics-results').style.display = '';
+  $('metrics-results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 </script>
 </body>
 </html>
