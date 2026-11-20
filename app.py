@@ -640,11 +640,7 @@ def metrics_upload_framework():
 
 @app.route("/metrics/upload-letterstream", methods=["POST"])
 def metrics_upload_letterstream():
-    """Upload LetterStream CSV to update the framework's letter confirmation set."""
-    fw = _get_framework()
-    if not fw.get("accounts"):
-        return jsonify({"error": "Load the review framework first."}), 400
-
+    """Upload LetterStream CSV to update the letter confirmation set."""
     ls_file = request.files.get("letterstream_file")
     if not ls_file:
         return jsonify({"error": "letterstream_file is required"}), 400
@@ -655,28 +651,29 @@ def metrics_upload_letterstream():
     return jsonify({"ok": True, "letter_count": len(ids)})
 
 
-def _run_refresh_job(job_id: str) -> None:
-    """Background thread: pull fresh NS notes/emails and compute metrics against stored framework."""
+def _run_refresh_job(job_id: str, month: int, year: int) -> None:
+    """Background thread: pull all live NS data, compute metrics."""
     try:
-        fw = _get_framework()
-        if not fw.get("accounts"):
-            _set_job(job_id, status="error", error="No framework loaded. Upload the review XLSX first.")
-            return
-
-        accounts      = fw["accounts"]
-        month         = fw["month"]
-        year          = fw["year"]
-        ls_ids        = fw.get("ls_ids", set())
-
-        _set_job(job_id, status="running", message="Pulling collections notes and emails from NetSuite…")
-
         def progress(msg: str):
             _set_job(job_id, message=msg)
 
+        _set_job(job_id, status="running", message="Pulling invoices from NetSuite…")
+        invoices, credits = pull_netsuite_data(progress_cb=progress)
+        _set_job(job_id, message=f"Processing {len(invoices)} invoices…")
+        accounts = process_collections(invoices, credits, month, year)
+        logger.info("Refresh job %s: %d accounts from live pull", job_id, len(accounts))
+
+        fc_nonzero = [(a.collect_as, a.raw_balances.get("Finance Charges", 0.0))
+                      for a in accounts if a.raw_balances.get("Finance Charges", 0.0) > 0.01]
+        logger.info("Refresh job %s: %d accounts with non-zero FC; sample: %s",
+                    job_id, len(fc_nonzero), fc_nonzero[:5])
+
+        ls_ids = _get_framework().get("ls_ids", set())
+
+        _set_job(job_id, status="running", message="Pulling collections notes and emails from NetSuite…")
         notes, messages = pull_metrics_data(month, year, progress_cb=progress)
         logger.info("Refresh job %s: %d notes, %d messages", job_id, len(notes), len(messages))
 
-        # Diagnostic: log unique author values so we can verify name format matches REPS
         unique_authors = sorted({m.get("author", "") for m in messages if m.get("author")})
         logger.info("Refresh job %s: unique message authors (%d): %s",
                     job_id, len(unique_authors), unique_authors[:20])
@@ -709,16 +706,16 @@ def _run_refresh_job(job_id: str) -> None:
 
 @app.route("/metrics/refresh/start", methods=["POST"])
 def metrics_refresh_start():
-    """Start an async metrics refresh against the loaded framework. Returns {job_id}."""
-    fw = _get_framework()
-    if not fw.get("accounts"):
-        return jsonify({"error": "No framework loaded. Upload the review XLSX first."}), 400
+    """Start an async metrics refresh pulling all live NS data. Returns {job_id}."""
+    data  = request.get_json(force=True, silent=True) or {}
+    month = int(data.get("month", datetime.date.today().month))
+    year  = int(data.get("year",  datetime.date.today().year))
 
     job_id = uuid.uuid4().hex
     _set_job(job_id, status="pending")
-    t = threading.Thread(target=_run_refresh_job, args=(job_id,), daemon=True)
+    t = threading.Thread(target=_run_refresh_job, args=(job_id, month, year), daemon=True)
     t.start()
-    logger.info("Started refresh job %s", job_id)
+    logger.info("Started refresh job %s for %d/%d", job_id, month, year)
     return jsonify({"job_id": job_id})
 
 
@@ -734,29 +731,9 @@ def metrics_refresh_status(job_id: str):
 
 @app.route("/metrics/framework-status")
 def metrics_framework_status():
-    """Return the current framework state plus a zero-activity baseline metrics view."""
+    """Return LetterStream letter count (the only server-side state kept between refreshes)."""
     fw = _get_framework()
-    if not fw.get("accounts"):
-        return jsonify({"loaded": False})
-    month = fw["month"]
-    year  = fw["year"]
-
-    baseline = compute_metrics(
-        accounts=fw["accounts"], notes=[], messages=[],
-        letterstream_ids=set(), sf_calls={},
-        month=month, year=year,
-    )
-
-    return jsonify({
-        "loaded":         True,
-        "month":          month,
-        "year":           year,
-        "month_name":     datetime.date(year, month, 1).strftime("%B %Y"),
-        "total_accounts": len(fw["accounts"]),
-        "rep_counts":     fw.get("rep_counts", {}),
-        "letter_count":   len(fw.get("ls_ids", set())),
-        "baseline":       metrics_to_json(baseline, month, year),
-    })
+    return jsonify({"letter_count": len(fw.get("ls_ids", set()))})
 
 
 if __name__ == "__main__":

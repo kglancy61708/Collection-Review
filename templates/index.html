@@ -202,70 +202,30 @@
     </div>
     <div class="card-body">
 
-      <!-- Step 1: Load Framework -->
-      <div id="metrics-setup">
-        <p class="text-muted mb-3" style="font-size:0.9rem;">
-          Upload the monthly Collections Review XLSX once to set the framework. Then refresh at any time to pull the latest NetSuite activity.
-        </p>
+      <p class="text-muted mb-3" style="font-size:0.9rem;">
+        Pull live collections status and rep assignments directly from NetSuite to calculate metrics for the selected month.
+      </p>
 
-        <div class="mb-3">
-          <label class="form-label fw-semibold" for="review-file">
-            Collections Review XLSX <span class="text-danger">*</span>
-          </label>
-          <input class="form-control" type="file" id="review-file" accept=".xlsx">
-        </div>
-
-        <div class="mb-3">
-          <label class="form-label fw-semibold" for="letterstream-file">
-            LetterStream Export <span class="text-muted fw-normal">(optional)</span>
-          </label>
-          <input class="form-control" type="file" id="letterstream-file" accept=".csv">
-          <div class="form-text">Upload the LetterStream activity CSV to include letter confirmation.</div>
-        </div>
-
-        <button class="btn btn-primary px-4" id="btn-load-framework" {% if not ns_configured %}disabled{% endif %}>
-          <i class="bi bi-upload me-1"></i> Load Framework
+      <div class="d-flex gap-2 align-items-center flex-wrap">
+        <button class="btn btn-success px-4" id="btn-refresh-metrics" {% if not ns_configured %}disabled{% endif %}>
+          <i class="bi bi-arrow-clockwise me-1"></i> Refresh Metrics
         </button>
-        {% if not ns_configured %}
-        <span class="text-muted small ms-2"><i class="bi bi-exclamation-circle me-1"></i>Requires NetSuite credentials</span>
-        {% endif %}
-
-        <div id="framework-loading" class="mt-2" style="display:none;">
-          <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-          <span class="text-muted small ms-2">Loading…</span>
-        </div>
+        <button class="btn btn-outline-secondary btn-sm" id="btn-upload-ls">
+          <i class="bi bi-file-earmark-text me-1"></i> Update LetterStream
+        </button>
+        <span id="ls-badge" class="text-muted small" style="display:none;"></span>
       </div>
+      {% if not ns_configured %}
+      <div class="text-muted small mt-2"><i class="bi bi-exclamation-circle me-1"></i>Requires NetSuite credentials</div>
+      {% endif %}
 
-      <!-- Framework loaded banner -->
-      <div id="metrics-framework-banner" class="alert alert-success d-flex align-items-center justify-content-between mt-3" style="display:none !important;">
-        <div>
-          <i class="bi bi-check-circle-fill me-2"></i>
-          <strong id="framework-month-label"></strong> framework loaded —
-          <span id="framework-rep-counts"></span>
+      <div id="refresh-progress" class="mt-3" style="display:none;">
+        <div class="d-flex align-items-center gap-2">
+          <div class="spinner-border spinner-border-sm text-success" role="status"></div>
+          <span id="refresh-progress-msg" class="text-muted small">Starting…</span>
         </div>
-        <button class="btn btn-sm btn-outline-secondary" id="btn-change-framework">Change</button>
-      </div>
-
-      <!-- Refresh button (shown after framework loaded) -->
-      <div id="metrics-refresh-panel" style="display:none;">
-        <div class="d-flex gap-2 align-items-center flex-wrap mt-3">
-          <button class="btn btn-success px-4" id="btn-refresh-metrics" {% if not ns_configured %}disabled{% endif %}>
-            <i class="bi bi-arrow-clockwise me-1"></i> Refresh Metrics
-          </button>
-          <button class="btn btn-outline-secondary btn-sm" id="btn-upload-ls">
-            <i class="bi bi-file-earmark-text me-1"></i> Update LetterStream
-          </button>
-          <span id="ls-badge" class="text-muted small" style="display:none;"></span>
-        </div>
-
-        <div id="refresh-progress" class="mt-3" style="display:none;">
-          <div class="d-flex align-items-center gap-2">
-            <div class="spinner-border spinner-border-sm text-success" role="status"></div>
-            <span id="refresh-progress-msg" class="text-muted small">Starting…</span>
-          </div>
-          <div class="progress mt-2" style="height:4px;">
-            <div class="progress-bar bg-success progress-bar-striped progress-bar-animated w-100"></div>
-          </div>
+        <div class="progress mt-2" style="height:4px;">
+          <div class="progress-bar bg-success progress-bar-striped progress-bar-animated w-100"></div>
         </div>
       </div>
 
@@ -608,7 +568,7 @@ function renderPreview(data) {
 }
 
 // ---------------------------------------------------------------------------
-// Metrics — Framework + Refresh flow
+// Metrics — Refresh flow
 // ---------------------------------------------------------------------------
 
 function fmt$(n) {
@@ -618,102 +578,17 @@ function fmtPct(n) {
   return (n || 0).toFixed(1) + '%';
 }
 
-function showFrameworkLoaded(data) {
-  // Hide setup, show banner + refresh panel
-  $('metrics-setup').style.display = 'none';
-  const banner = $('metrics-framework-banner');
-  banner.style.display = '';
-  banner.style.removeProperty('display');  // override the !important hide
-  banner.classList.remove('d-none');
-  $('framework-month-label').textContent = data.month_name;
-  const rc = data.rep_counts || {};
-  const parts = Object.entries(rc).map(([k,v]) => `${k.split(',')[0].trim()} ${v}`);
-  $('framework-rep-counts').textContent = parts.join(' / ') + ` (${data.total_accounts} total)`;
-  $('metrics-refresh-panel').style.display = '';
-}
-
-// Check on load if a framework is already in memory on the server
+// Check on load if a LetterStream file is already loaded on the server
 (async () => {
   try {
     const r = await fetch('/metrics/framework-status');
     const d = await r.json();
-    if (d.loaded) {
-      showFrameworkLoaded(d);
-      if (d.letter_count) {
-        $('ls-badge').textContent = `${d.letter_count} LetterStream IDs loaded`;
-        $('ls-badge').style.display = '';
-      }
-      // Show baseline table (zero activity) so the user sees account counts immediately
-      if (d.baseline) {
-        d.baseline.generated_at = 'framework load (no activity yet)';
-        renderMetrics(d.baseline);
-      }
+    if (d.letter_count) {
+      $('ls-badge').textContent = `${d.letter_count} LetterStream IDs loaded`;
+      $('ls-badge').style.display = '';
     }
   } catch {}
 })();
-
-// Load Framework button
-$('btn-load-framework').addEventListener('click', async () => {
-  hideInlineError('metrics-error');
-  const rvFile = $('review-file').files[0];
-  if (!rvFile) {
-    showInlineError('metrics-error', 'Please select the Collections Review XLSX.');
-    return;
-  }
-
-  const month = parseInt($('report-month').value);
-  const year  = parseInt($('report-year').value);
-  const formData = new FormData();
-  formData.append('review_file', rvFile);
-  formData.append('month', month);
-  formData.append('year', year);
-
-  const lsFile = $('letterstream-file').files[0];
-  if (lsFile) formData.append('letterstream_file', lsFile);
-
-  $('btn-load-framework').disabled = true;
-  $('framework-loading').style.display = '';
-
-  try {
-    const resp = await fetch('/metrics/upload-framework', { method: 'POST', body: formData });
-    const data = await resp.json();
-    if (!resp.ok || data.error) {
-      showInlineError('metrics-error', data.error || `HTTP ${resp.status}`);
-      return;
-    }
-
-    // Also upload LetterStream if provided
-    if (lsFile) {
-      const lsForm = new FormData();
-      lsForm.append('letterstream_file', lsFile);
-      const lsResp = await fetch('/metrics/upload-letterstream', { method: 'POST', body: lsForm });
-      const lsData = await lsResp.json();
-      if (lsData.ok) {
-        $('ls-badge').textContent = `${lsData.letter_count} LetterStream IDs loaded`;
-        $('ls-badge').style.display = '';
-      }
-    }
-
-    showFrameworkLoaded(data);
-    if (data.baseline) {
-      data.baseline.generated_at = 'framework load (no activity yet)';
-      renderMetrics(data.baseline);
-    }
-  } catch (e) {
-    showInlineError('metrics-error', e.message || 'Error loading framework.');
-  } finally {
-    $('btn-load-framework').disabled = false;
-    $('framework-loading').style.display = 'none';
-  }
-});
-
-// Change framework link
-$('btn-change-framework').addEventListener('click', () => {
-  $('metrics-setup').style.display = '';
-  $('metrics-framework-banner').style.display = 'none';
-  $('metrics-refresh-panel').style.display = 'none';
-  $('metrics-results').style.display = 'none';
-});
 
 // Update LetterStream
 $('btn-upload-ls').addEventListener('click', async () => {
@@ -744,8 +619,15 @@ $('btn-refresh-metrics').addEventListener('click', async () => {
   $('refresh-progress').style.display = '';
   $('refresh-progress-msg').textContent = 'Starting…';
 
+  const month = parseInt($('report-month').value);
+  const year  = parseInt($('report-year').value);
+
   try {
-    const startResp = await fetch('/metrics/refresh/start', { method: 'POST' });
+    const startResp = await fetch('/metrics/refresh/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({month, year}),
+    });
     const startData = await startResp.json();
     if (!startResp.ok || startData.error) {
       showInlineError('metrics-error', startData.error || `HTTP ${startResp.status}`);

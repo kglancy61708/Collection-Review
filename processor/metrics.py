@@ -127,7 +127,8 @@ def compute_metrics(
         for acc in rep_accounts:
             cust  = acc.collect_as
             aid   = _acct_id(cust)
-            status = acc.suggested_status or ""
+            # Prefer live customer-level status (custentity241) over derived status
+            status = acc.collections_status_customer or acc.suggested_status or ""
             status_title = status.title()
 
             creq, lreq = STATUS_GOALS.get(status, STATUS_GOALS.get(status_title, (2, None)))
