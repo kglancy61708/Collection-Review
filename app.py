@@ -613,6 +613,16 @@ def metrics_upload_framework():
     _set_framework(accounts=accounts, month=month, year=year, rep_counts=dict(rep_counts), ls_ids=set())
     logger.info("Framework loaded: %d/%d, %d accounts, reps: %s", month, year, len(accounts), dict(rep_counts))
 
+    # Compute a baseline metrics view (zero activity) so the UI can show the
+    # table immediately without waiting for a NetSuite refresh.
+    from processor.metrics import compute_metrics, metrics_to_json
+    baseline = compute_metrics(
+        accounts=accounts, notes=[], messages=[],
+        letterstream_ids=set(), sf_calls={},
+        month=month, year=year,
+    )
+    baseline_json = metrics_to_json(baseline, month, year)
+
     month_name = datetime.date(year, month, 1).strftime("%B %Y")
     return jsonify({
         "ok": True,
@@ -621,6 +631,7 @@ def metrics_upload_framework():
         "month_name": month_name,
         "total_accounts": len(accounts),
         "rep_counts": dict(rep_counts),
+        "baseline": baseline_json,
     })
 
 
@@ -712,12 +723,19 @@ def metrics_refresh_status(job_id: str):
 
 @app.route("/metrics/framework-status")
 def metrics_framework_status():
-    """Return the current framework state (month/year/rep counts). No auth needed."""
+    """Return the current framework state plus a zero-activity baseline metrics view."""
     fw = _get_framework()
     if not fw.get("accounts"):
         return jsonify({"loaded": False})
     month = fw["month"]
     year  = fw["year"]
+
+    baseline = compute_metrics(
+        accounts=fw["accounts"], notes=[], messages=[],
+        letterstream_ids=set(), sf_calls={},
+        month=month, year=year,
+    )
+
     return jsonify({
         "loaded":         True,
         "month":          month,
@@ -726,6 +744,7 @@ def metrics_framework_status():
         "total_accounts": len(fw["accounts"]),
         "rep_counts":     fw.get("rep_counts", {}),
         "letter_count":   len(fw.get("ls_ids", set())),
+        "baseline":       metrics_to_json(baseline, month, year),
     })
 
 

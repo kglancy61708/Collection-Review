@@ -643,6 +643,11 @@ function showFrameworkLoaded(data) {
         $('ls-badge').textContent = `${d.letter_count} LetterStream IDs loaded`;
         $('ls-badge').style.display = '';
       }
+      // Show baseline table (zero activity) so the user sees account counts immediately
+      if (d.baseline) {
+        d.baseline.generated_at = 'framework load (no activity yet)';
+        renderMetrics(d.baseline);
+      }
     }
   } catch {}
 })();
@@ -690,6 +695,10 @@ $('btn-load-framework').addEventListener('click', async () => {
     }
 
     showFrameworkLoaded(data);
+    if (data.baseline) {
+      data.baseline.generated_at = 'framework load (no activity yet)';
+      renderMetrics(data.baseline);
+    }
   } catch (e) {
     showInlineError('metrics-error', e.message || 'Error loading framework.');
   } finally {
