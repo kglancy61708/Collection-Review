@@ -573,8 +573,10 @@ def process_collections(
         acc.balances[bucket] += amount
         acc.raw_balances[bucket] += amount
 
-        # Track max DSO (days since invoice date) for non-FC invoices
-        dso = (report_date - inv_date).days
+        # Track max DSO (days past due date) for non-FC invoices.
+        # Use due_date if present; fall back to trandate so old pull data still works.
+        due_date = _parse_date(inv.get("due_date", "")) or inv_date
+        dso = (report_date - due_date).days
         if acc.oldest_dso is None or dso > acc.oldest_dso:
             acc.oldest_dso = float(dso)
 

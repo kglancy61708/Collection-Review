@@ -345,6 +345,16 @@ def _run_metrics_job(job_id: str, month: int, year: int,
         _set_job(job_id, message="Pulling collections notes and emails from NetSuite…")
         notes, messages = pull_metrics_data(month, year, progress_cb=progress)
 
+        # Diagnostic: log FC totals so we can verify raw_balances is populated
+        fc_nonzero = [(a.collect_as, a.raw_balances.get("Finance Charges", 0.0))
+                      for a in accounts if a.raw_balances.get("Finance Charges", 0.0) > 0.01]
+        logger.info("Metrics job %s: %d accounts have non-zero FC; sample: %s",
+                    job_id, len(fc_nonzero), fc_nonzero[:5])
+        # Diagnostic: log DSO sample to verify due_date is being used
+        dso_sample = [(a.collect_as[:30], round(a.oldest_dso or 0))
+                      for a in accounts if a.oldest_dso is not None][:5]
+        logger.info("Metrics job %s: DSO sample (from due date): %s", job_id, dso_sample)
+
         _set_job(job_id, message="Building metrics report…")
         xlsx_bytes = build_metrics_workbook(
             accounts=accounts,

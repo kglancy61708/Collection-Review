@@ -59,6 +59,7 @@ def _build_invoice_query() -> str:
 SELECT
   c.altname || ' : ' || c.entityid          AS "Collect As",
   TO_CHAR(t.trandate, 'MM/DD/YYYY')          AS "Date",
+  TO_CHAR(t.duedate, 'MM/DD/YYYY')           AS "Due Date",
   t.foreignamountunpaid                       AS "Amount Remaining",
   BUILTIN.DF(t.subsidiary)                   AS "Business Unit",
 {category_col},
@@ -289,6 +290,7 @@ def _normalise_invoice_rows(rows: list[dict]) -> list[dict]:
         record = {
             "collect_as":                    g("Collect As"),
             "date":                          g("Date"),
+            "due_date":                      g("Due Date"),
             "amount_remaining":              amount,
             "business_unit":                 g("Business Unit"),
             "category":                      g("Category"),

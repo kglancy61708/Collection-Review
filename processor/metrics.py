@@ -55,6 +55,21 @@ def _acct_id(s: str) -> Optional[str]:
     return m.group(1).upper() if m else None
 
 
+def _to_last_first(name: str) -> str:
+    """Normalize a name to 'Last, First' format.
+    Leaves 'Last, First' unchanged; converts 'First Last' → 'Last, First'.
+    """
+    name = name.strip()
+    if not name:
+        return name
+    if "," in name:
+        return name  # already Last, First
+    parts = name.split()
+    if len(parts) >= 2:
+        return parts[-1] + ", " + " ".join(parts[:-1])
+    return name
+
+
 # ---------------------------------------------------------------------------
 # Core metrics computation
 # ---------------------------------------------------------------------------
@@ -80,7 +95,7 @@ def compute_metrics(
     letter_note_counts: dict[str, dict[str, int]] = {r: {} for r in REPS}
 
     for n in notes:
-        rep   = n.get("employee", "").strip()
+        rep   = _to_last_first(n.get("employee", "").strip())
         cust  = n.get("customer", "").strip()
         ntype = n.get("type", "").strip()
         if rep not in REPS:
@@ -95,7 +110,7 @@ def compute_metrics(
     # Email index: email_counts[rep][acct_id] = count
     email_counts: dict[str, dict[str, int]] = {r: {} for r in REPS}
     for m in messages:
-        rep  = m.get("author", "").strip()
+        rep  = _to_last_first(m.get("author", "").strip())
         cust = m.get("customer", "").strip()
         if rep not in REPS:
             continue
