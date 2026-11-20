@@ -144,6 +144,9 @@ class AccountSummary:
     is_autopay: bool = False
     section: str = "actionable"  # "actionable", "current_only", "autopay"
 
+    # Customer-level collections status from NetSuite (custentity241)
+    collections_status_customer: str = ""
+
     # Max days-since-due for regular (non-FC) invoices — set during processing
     oldest_dso: Optional[float] = None
 
@@ -550,6 +553,12 @@ def process_collections(
             acc.collection_escalation_status = inv["collection_escalation_status"]
         if inv.get("account_restricted", "").lower() == "yes":
             acc.account_restricted = "Yes"
+        # Capture rep assignment from NetSuite customer field (custentity223)
+        if not acc.collections_assignment and inv.get("collections_assignment"):
+            acc.collections_assignment = inv["collections_assignment"].strip()
+        # Capture customer-level collections status (custentity241) if present
+        if not acc.collections_status_customer and inv.get("collections_status_customer"):
+            acc.collections_status_customer = inv["collections_status_customer"].strip()
 
         amount = inv.get("amount_remaining", 0.0)
         if amount <= 0.0:
@@ -635,7 +644,13 @@ def process_collections(
             acc.section = "actionable"
 
     # --- Assign reps ---
-    assign_reps(accounts)
+    # If NS_FIELD_COLLECTIONS_ASSIGNMENT (custentity223) is configured, accounts
+    # already have collections_assignment set from NetSuite — skip bin-packing.
+    ns_assigned = sum(1 for a in accounts if a.collections_assignment)
+    if ns_assigned < len(accounts) * 0.5:
+        # Fewer than half have a NetSuite assignment → field not configured; use bin-packing
+        assign_reps(accounts)
+    # else: use the NetSuite assignments as-is
 
     # --- Sort ---
     def sort_key(a: AccountSummary):
