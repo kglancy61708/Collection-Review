@@ -363,11 +363,12 @@ def _parse_review_xlsx(raw_bytes: bytes) -> list | None:
                 return headers.index(name)
             except ValueError:
                 pass
-            # Case-insensitive substring match — handles "Suggested November 2026 Status"
-            # (writer format) as well as other minor variations
-            name_lower = name.lower()
+            # Word-set match: all words of `name` must appear in the header.
+            # Handles "Suggested November 2026 Status" for target "Suggested Status"
+            # because {"suggested","status"} ⊆ {"suggested","november","2026","status"}.
+            name_words = set(name.lower().split())
             for j, h in enumerate(headers):
-                if name_lower in h.lower():
+                if name_words.issubset(set(h.lower().split())):
                     return j
             return None
 
@@ -674,6 +675,14 @@ def _run_refresh_job(job_id: str) -> None:
 
         notes, messages = pull_metrics_data(month, year, progress_cb=progress)
         logger.info("Refresh job %s: %d notes, %d messages", job_id, len(notes), len(messages))
+
+        # Diagnostic: log unique author values so we can verify name format matches REPS
+        unique_authors = sorted({m.get("author", "") for m in messages if m.get("author")})
+        logger.info("Refresh job %s: unique message authors (%d): %s",
+                    job_id, len(unique_authors), unique_authors[:20])
+        unique_employees = sorted({n.get("employee", "") for n in notes if n.get("employee")})
+        logger.info("Refresh job %s: unique note employees (%d): %s",
+                    job_id, len(unique_employees), unique_employees[:20])
 
         _set_job(job_id, message="Computing metrics…")
         metrics_by_rep = compute_metrics(
