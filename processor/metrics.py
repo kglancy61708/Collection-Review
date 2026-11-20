@@ -57,9 +57,10 @@ def _acct_id(s: str) -> Optional[str]:
 
 def _to_last_first(name: str) -> str:
     """Normalize a name to 'Last, First' format.
+    Strips trailing email addresses like 'Rosas, Yoniva (email@domain.com)'.
     Leaves 'Last, First' unchanged; converts 'First Last' → 'Last, First'.
     """
-    name = name.strip()
+    name = re.sub(r"\s*\(.*?\)\s*$", "", name.strip()).strip()
     if not name:
         return name
     if "," in name:
