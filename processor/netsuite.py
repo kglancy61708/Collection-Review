@@ -383,6 +383,96 @@ def diagnose() -> dict:
     return results
 
 
+def _build_collections_notes_query(month: int, year: int) -> str:
+    """Collections Notes custom record (customrecord156) for a given month."""
+    return f"""
+SELECT
+  BUILTIN.DF(cr.custrecord1712)                        AS "Customer",
+  BUILTIN.DF(cr.custrecord1713)                        AS "Employee",
+  BUILTIN.DF(cr.custrecord1715)                        AS "Type",
+  TO_CHAR(cr.custrecord3576, 'MM/DD/YYYY HH24:MI:SS') AS "Date Created",
+  cr.custrecord1718                                     AS "Note"
+FROM customrecord156 cr
+WHERE EXTRACT(MONTH FROM cr.custrecord3576) = {month}
+  AND EXTRACT(YEAR  FROM cr.custrecord3576) = {year}
+ORDER BY cr.custrecord3576
+"""
+
+
+def _build_messages_query(month: int, year: int) -> str:
+    """Outbound NetSuite emails (Message entity) sent by collections reps for a given month."""
+    return f"""
+SELECT
+  BUILTIN.DF(m.entity) AS "Customer",
+  m.author              AS "Author",
+  TO_CHAR(m.messagedate, 'MM/DD/YYYY') AS "Date",
+  m.subject             AS "Subject"
+FROM message m
+WHERE EXTRACT(MONTH FROM m.messagedate) = {month}
+  AND EXTRACT(YEAR  FROM m.messagedate) = {year}
+  AND m.incoming = 'F'
+  AND m.author IN ('Quilantan, Maria', 'Rosas, Yoniva')
+ORDER BY m.messagedate
+"""
+
+
+def _normalise_note_rows(rows: list[dict]) -> list[dict]:
+    result = []
+    for row in rows:
+        def g(key: str) -> str:
+            v = row.get(key) or row.get(key.lower()) or ""
+            return str(v).strip() if v is not None else ""
+        result.append({
+            "customer":      g("Customer"),
+            "employee":      g("Employee"),
+            "type":          g("Type"),
+            "date_created":  g("Date Created"),
+            "note":          g("Note"),
+        })
+    return result
+
+
+def _normalise_message_rows(rows: list[dict]) -> list[dict]:
+    result = []
+    for row in rows:
+        def g(key: str) -> str:
+            v = row.get(key) or row.get(key.lower()) or ""
+            return str(v).strip() if v is not None else ""
+        result.append({
+            "customer": g("Customer"),
+            "author":   g("Author"),
+            "date":     g("Date"),
+            "subject":  g("Subject"),
+        })
+    return result
+
+
+def pull_metrics_data(
+    month: int, year: int, progress_cb=None
+) -> tuple[list[dict], list[dict]]:
+    """
+    Pull collections notes and outbound emails for a given month from NetSuite.
+    Returns (notes, messages) as normalised dicts.
+    """
+    if not check_credentials():
+        raise RuntimeError(
+            "NetSuite credentials are not configured. "
+            "Set NS_CONSUMER_KEY, NS_CONSUMER_SECRET, NS_TOKEN_ID, and "
+            "NS_TOKEN_SECRET as environment variables."
+        )
+
+    raw_notes    = _run_query(_build_collections_notes_query(month, year),
+                              f"collections notes {month}/{year}", progress_cb=progress_cb)
+    raw_messages = _run_query(_build_messages_query(month, year),
+                              f"messages {month}/{year}", progress_cb=progress_cb)
+
+    notes    = _normalise_note_rows(raw_notes)
+    messages = _normalise_message_rows(raw_messages)
+    logger.info("Metrics pull: %d notes, %d messages for %d/%d",
+                len(notes), len(messages), month, year)
+    return notes, messages
+
+
 def pull_netsuite_data(progress_cb=None) -> tuple[list[dict], list[dict]]:
     """
     Pull open invoices and credits from NetSuite via SuiteQL.

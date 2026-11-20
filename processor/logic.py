@@ -144,6 +144,9 @@ class AccountSummary:
     is_autopay: bool = False
     section: str = "actionable"  # "actionable", "current_only", "autopay"
 
+    # Max days-since-due for regular (non-FC) invoices — set during processing
+    oldest_dso: Optional[float] = None
+
     @property
     def total_open_balance(self) -> float:
         return sum(self.balances[b] for b in BUCKETS if b != "Future")
@@ -503,6 +506,7 @@ def process_collections(
     Full processing pipeline. Returns list of AccountSummary objects.
     """
     bucket_ranges = compute_bucket_ranges(report_year, report_month)
+    report_date = datetime.date.today()
 
     # --- Aggregate invoices by account ---
     account_map: dict[str, AccountSummary] = {}
@@ -568,6 +572,11 @@ def process_collections(
 
         acc.balances[bucket] += amount
         acc.raw_balances[bucket] += amount
+
+        # Track max DSO (days since invoice date) for non-FC invoices
+        dso = (report_date - inv_date).days
+        if acc.oldest_dso is None or dso > acc.oldest_dso:
+            acc.oldest_dso = float(dso)
 
     # --- Group credits by account ---
     credit_map: dict[str, list[float]] = {}

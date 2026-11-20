@@ -194,6 +194,50 @@
     </div>
   </div>
 
+  <!-- Metrics Section -->
+  <div class="card step-card" id="metrics-card">
+    <div class="card-header">
+      <span class="step-badge"><i class="bi bi-bar-chart-line"></i></span> Collections Metrics
+      <span class="badge bg-secondary ms-2" style="font-size:0.75rem;">Maria &amp; Yoniva</span>
+    </div>
+    <div class="card-body">
+      <p class="text-muted mb-3" style="font-size:0.9rem;">
+        Pulls live data from NetSuite (invoices, collections notes, emails) for the selected month
+        and generates a compliance metrics report for Maria Quilantan and Yoniva Rosas.
+      </p>
+
+      <div class="mb-3">
+        <label class="form-label fw-semibold" for="letterstream-file">
+          LetterStream Export <span class="text-muted fw-normal">(optional)</span>
+        </label>
+        <input class="form-control" type="file" id="letterstream-file" accept=".csv">
+        <div class="form-text">Upload the LetterStream activity CSV export to include letter confirmation in compliance checking.</div>
+      </div>
+
+      <div class="d-flex gap-2 align-items-center flex-wrap">
+        <button class="btn btn-primary px-4" id="btn-metrics" {% if not ns_configured %}disabled{% endif %}>
+          <i class="bi bi-graph-up me-1"></i> Run Metrics
+        </button>
+        {% if not ns_configured %}
+        <span class="text-muted small"><i class="bi bi-exclamation-circle me-1"></i>Requires NetSuite credentials</span>
+        {% endif %}
+      </div>
+
+      <!-- Metrics progress -->
+      <div id="metrics-progress" class="mt-3" style="display:none;">
+        <div class="d-flex align-items-center gap-2">
+          <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+          <span id="metrics-progress-msg" class="text-muted small">Starting…</span>
+        </div>
+        <div class="progress mt-2" style="height:4px;">
+          <div class="progress-bar progress-bar-striped progress-bar-animated w-100"></div>
+        </div>
+      </div>
+
+      <div id="metrics-error" class="alert alert-danger mt-3" style="display:none;"></div>
+    </div>
+  </div>
+
   <footer class="app-footer">
     Collections Review Generator &mdash; Internal Use Only
   </footer>
@@ -469,6 +513,51 @@ function renderPreview(data) {
   $('preview-card').style.display = '';
   $('preview-card').scrollIntoView({behavior: 'smooth', block: 'start'});
 }
+
+// ---------------------------------------------------------------------------
+// Metrics — Run button
+// ---------------------------------------------------------------------------
+$('btn-metrics').addEventListener('click', async () => {
+  hideInlineError('metrics-error');
+  const month = parseInt($('report-month').value);
+  const year  = parseInt($('report-year').value);
+
+  const formData = new FormData();
+  formData.append('month', month);
+  formData.append('year', year);
+  const lsFile = $('letterstream-file').files[0];
+  if (lsFile) formData.append('letterstream_file', lsFile);
+
+  $('btn-metrics').disabled = true;
+  $('metrics-progress').style.display = '';
+  $('metrics-progress-msg').textContent = 'Starting metrics job…';
+
+  try {
+    const startResp = await fetch('/metrics/start', { method: 'POST', body: formData });
+    let startData;
+    try { startData = await startResp.json(); } catch { startData = {}; }
+    if (!startResp.ok || startData.error) {
+      showInlineError('metrics-error', startData.error || `HTTP ${startResp.status}`);
+      return;
+    }
+    const jobId = startData.job_id;
+
+    await pollJob(
+      jobId,
+      `/metrics/status/${jobId}`,
+      3000,
+      msg => { $('metrics-progress-msg').textContent = msg; }
+    );
+
+    window.location.href = `/metrics/download/${jobId}`;
+    showSuccess('Metrics report generated and downloaded.');
+  } catch (e) {
+    showInlineError('metrics-error', e.message || 'Unknown error during metrics run.');
+  } finally {
+    $('btn-metrics').disabled = false;
+    $('metrics-progress').style.display = 'none';
+  }
+});
 </script>
 </body>
 </html>

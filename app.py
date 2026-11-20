@@ -12,10 +12,13 @@ import uuid
 
 from flask import Flask, jsonify, render_template, request, send_file
 
+import csv
+
 from processor.logic import process_collections
-from processor.netsuite import pull_netsuite_data, check_credentials
+from processor.netsuite import pull_netsuite_data, pull_metrics_data, check_credentials
 from processor.parser import parse_invoices, parse_credits
 from processor.excel_writer import build_workbook
+from processor.metrics import build_metrics_workbook
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -297,6 +300,133 @@ def _build_preview(accounts, month, year):
         "status_counts": dict(status_counts),
         "errors": [],
     }
+
+
+# ---------------------------------------------------------------------------
+# Metrics endpoints
+# ---------------------------------------------------------------------------
+
+def _parse_letterstream_csv(raw_bytes: bytes) -> set[str]:
+    """
+    Parse a LetterStream activity export CSV and return the set of account IDs
+    found in the Job Name column.  Line 1 is a title row — skip it.
+    """
+    import re as _re
+    pat = _re.compile(r"([0-9]{2}[A-Z]{2,5}[0-9]{2,5})", _re.I)
+    ids: set[str] = set()
+    try:
+        text = raw_bytes.decode("utf-8-sig", errors="replace")
+        lines = text.splitlines()
+        if len(lines) > 1:
+            reader = csv.DictReader(lines[1:])
+            for row in reader:
+                job = row.get("Job Name") or row.get(list(row.keys())[0] if row else "") or ""
+                m = pat.search(str(job))
+                if m:
+                    ids.add(m.group(1).upper())
+    except Exception as e:
+        logger.warning("LetterStream parse error: %s", e)
+    return ids
+
+
+def _run_metrics_job(job_id: str, month: int, year: int,
+                     letterstream_ids: set[str]) -> None:
+    """Background thread: pull NS data + metrics data, compute metrics, store result."""
+    try:
+        _set_job(job_id, status="running", message="Pulling invoices from NetSuite…")
+
+        def progress(msg: str):
+            _set_job(job_id, message=msg)
+
+        invoices, credits = pull_netsuite_data(progress_cb=progress)
+        _set_job(job_id, message=f"Processing {len(invoices)} invoices…")
+        accounts = process_collections(invoices, credits, month, year)
+
+        _set_job(job_id, message="Pulling collections notes and emails from NetSuite…")
+        notes, messages = pull_metrics_data(month, year, progress_cb=progress)
+
+        _set_job(job_id, message="Building metrics report…")
+        xlsx_bytes = build_metrics_workbook(
+            accounts=accounts,
+            notes=notes,
+            messages=messages,
+            letterstream_ids=letterstream_ids,
+            sf_calls={},   # Salesforce integration placeholder
+            month=month,
+            year=year,
+        )
+        _set_job(job_id, status="done", xlsx=xlsx_bytes, month=month, year=year)
+        logger.info("Metrics job %s complete (%d bytes)", job_id, len(xlsx_bytes))
+
+    except RuntimeError as e:
+        logger.error("Metrics job %s RuntimeError: %s", job_id, e)
+        _set_job(job_id, status="error", error=str(e))
+    except Exception as e:
+        logger.exception("Metrics job %s unexpected error", job_id)
+        _set_job(job_id, status="error", error=f"{type(e).__name__}: {e}")
+
+
+@app.route("/metrics/start", methods=["POST"])
+def metrics_start():
+    """
+    Start a background metrics job.
+    Accepts multipart/form-data with optional fields:
+      month (int), year (int), letterstream_file (CSV upload)
+    Returns {job_id}.
+    """
+    month = int(request.form.get("month", datetime.date.today().month))
+    year  = int(request.form.get("year",  datetime.date.today().year))
+
+    letterstream_ids: set[str] = set()
+    ls_file = request.files.get("letterstream_file")
+    if ls_file:
+        letterstream_ids = _parse_letterstream_csv(ls_file.read())
+        logger.info("LetterStream: %d account IDs parsed", len(letterstream_ids))
+
+    job_id = uuid.uuid4().hex
+    _set_job(job_id, status="pending", month=month, year=year)
+    t = threading.Thread(
+        target=_run_metrics_job,
+        args=(job_id, month, year, letterstream_ids),
+        daemon=True,
+    )
+    t.start()
+    logger.info("Started metrics job %s for %d/%d", job_id, month, year)
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/metrics/status/<job_id>")
+def metrics_status(job_id: str):
+    """Poll for metrics job status."""
+    job = _get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    safe = {k: v for k, v in job.items() if k != "xlsx"}
+    return jsonify(safe)
+
+
+@app.route("/metrics/download/<job_id>")
+def metrics_download(job_id: str):
+    """Download the metrics XLSX once the job is done."""
+    job = _get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    if job.get("status") == "error":
+        return jsonify({"error": job.get("error", "Unknown error")}), 500
+    if job.get("status") != "done":
+        return jsonify({"error": "Not ready yet"}), 202
+    xlsx_bytes = job.get("xlsx")
+    if not xlsx_bytes:
+        return jsonify({"error": "No file data"}), 500
+    m, y = job["month"], job["year"]
+    month_name = datetime.date(y, m, 1).strftime("%B_%Y")
+    filename = f"Collections_Metrics_{month_name}.xlsx"
+    return send_file(
+        io.BytesIO(xlsx_bytes),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=filename,
+    )
 
 
 if __name__ == "__main__":
