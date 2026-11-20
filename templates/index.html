@@ -207,6 +207,14 @@
       </p>
 
       <div class="mb-3">
+        <label class="form-label fw-semibold" for="review-file">
+          Collections Review XLSX <span class="text-muted fw-normal">(required)</span>
+        </label>
+        <input class="form-control" type="file" id="review-file" accept=".xlsx">
+        <div class="form-text">Upload the Collections Review XLSX for this month. The rep assignments from that file are used as the account list — without it, assignments are re-computed from live data and will differ from the actual review.</div>
+      </div>
+
+      <div class="mb-3">
         <label class="form-label fw-semibold" for="letterstream-file">
           LetterStream Export <span class="text-muted fw-normal">(optional)</span>
         </label>
@@ -525,6 +533,8 @@ $('btn-metrics').addEventListener('click', async () => {
   const formData = new FormData();
   formData.append('month', month);
   formData.append('year', year);
+  const rvFile = $('review-file').files[0];
+  if (rvFile) formData.append('review_file', rvFile);
   const lsFile = $('letterstream-file').files[0];
   if (lsFile) formData.append('letterstream_file', lsFile);
 

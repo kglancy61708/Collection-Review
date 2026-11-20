@@ -306,6 +306,113 @@ def _build_preview(accounts, month, year):
 # Metrics endpoints
 # ---------------------------------------------------------------------------
 
+def _parse_review_xlsx(raw_bytes: bytes) -> list | None:
+    """
+    Parse a Collections Review XLSX and return a list of AccountSummary objects
+    with collect_as, suggested_status, collections_assignment, and raw_balances
+    populated from the file.  Returns None if parsing fails.
+
+    Column names expected (from excel_writer.OUTPUT_COLUMNS):
+      Collect As, Suggested Status, Collections Assignment,
+      Current Balance, 30+ Balance, 60+ Balance, 90+ Balance,
+      120+ Balance, 150+ Balance, 180+ Balance, Finance Charges
+    """
+    from processor.logic import AccountSummary
+    import io as _io
+
+    BALANCE_COL_MAP = {
+        "Current Balance":  "Current",
+        "30+ Balance":      "30+",
+        "60+ Balance":      "60+",
+        "90+ Balance":      "90+",
+        "120+ Balance":     "120+",
+        "150+ Balance":     "150+",
+        "180+ Balance":     "180+",
+        "Finance Charges":  "Finance Charges",
+    }
+
+    try:
+        import openpyxl as _xl
+        wb = _xl.load_workbook(_io.BytesIO(raw_bytes), read_only=True, data_only=True)
+        # First sheet = the main review sheet
+        ws = wb.worksheets[0]
+        rows = list(ws.rows)
+        if not rows:
+            return None
+
+        # Find header row (first row whose cells contain "Collect As")
+        header_idx = None
+        headers: list[str] = []
+        for i, row in enumerate(rows):
+            vals = [str(c.value or "").strip() for c in row]
+            if "Collect As" in vals:
+                header_idx = i
+                headers = vals
+                break
+        if header_idx is None:
+            logger.warning("review XLSX: could not find 'Collect As' header row")
+            return None
+
+        def col_idx(name: str) -> int | None:
+            try:
+                return headers.index(name)
+            except ValueError:
+                # Try partial / case-insensitive match for "Suggested Status" which
+                # the writer suffixes with the month name
+                name_lower = name.lower()
+                for j, h in enumerate(headers):
+                    if h.lower().startswith(name_lower):
+                        return j
+            return None
+
+        ci_ca    = col_idx("Collect As")
+        ci_st    = col_idx("Suggested Status")
+        ci_as    = col_idx("Collections Assignment")
+        if ci_ca is None:
+            return None
+
+        balance_cols: dict[str, int] = {}
+        for col_name, bucket in BALANCE_COL_MAP.items():
+            idx = col_idx(col_name)
+            if idx is not None:
+                balance_cols[bucket] = idx
+
+        accounts: list[AccountSummary] = []
+        for row in rows[header_idx + 1:]:
+            cells = [c.value for c in row]
+            if not cells or ci_ca >= len(cells):
+                continue
+            ca = str(cells[ci_ca] or "").strip()
+            if not ca or ca.startswith("—") or ca.lower() in ("collect as", ""):
+                continue
+
+            status     = str(cells[ci_st]  or "").strip() if ci_st  is not None and ci_st  < len(cells) else ""
+            assignment = str(cells[ci_as]  or "").strip() if ci_as  is not None and ci_as  < len(cells) else ""
+
+            acc = AccountSummary(collect_as=ca)
+            acc.suggested_status      = status
+            acc.collections_assignment = assignment
+            # Populate raw_balances from the file
+            for bucket, idx in balance_cols.items():
+                if idx < len(cells):
+                    try:
+                        acc.raw_balances[bucket] = float(cells[idx] or 0)
+                    except (TypeError, ValueError):
+                        pass
+            # Mirror raw_balances → balances so total_raw_balance works
+            for bucket in acc.raw_balances:
+                acc.balances[bucket] = acc.raw_balances[bucket]
+
+            accounts.append(acc)
+
+        logger.info("review XLSX: parsed %d account rows", len(accounts))
+        return accounts if accounts else None
+
+    except Exception as e:
+        logger.warning("review XLSX parse error: %s", e)
+        return None
+
+
 def _parse_letterstream_csv(raw_bytes: bytes) -> set[str]:
     """
     Parse a LetterStream activity export CSV and return the set of account IDs
@@ -330,30 +437,38 @@ def _parse_letterstream_csv(raw_bytes: bytes) -> set[str]:
 
 
 def _run_metrics_job(job_id: str, month: int, year: int,
-                     letterstream_ids: set[str]) -> None:
+                     letterstream_ids: set[str],
+                     review_accounts: list | None = None) -> None:
     """Background thread: pull NS data + metrics data, compute metrics, store result."""
     try:
-        _set_job(job_id, status="running", message="Pulling invoices from NetSuite…")
-
         def progress(msg: str):
             _set_job(job_id, message=msg)
 
-        invoices, credits = pull_netsuite_data(progress_cb=progress)
-        _set_job(job_id, message=f"Processing {len(invoices)} invoices…")
-        accounts = process_collections(invoices, credits, month, year)
+        if review_accounts is not None:
+            # Use pre-parsed assignments from the uploaded review file
+            accounts = review_accounts
+            logger.info("Metrics job %s: using %d accounts from uploaded review XLSX",
+                        job_id, len(accounts))
+        else:
+            # Fall back: re-derive assignments from live NetSuite data
+            _set_job(job_id, status="running", message="Pulling invoices from NetSuite…")
+            invoices, credits = pull_netsuite_data(progress_cb=progress)
+            _set_job(job_id, message=f"Processing {len(invoices)} invoices…")
+            accounts = process_collections(invoices, credits, month, year)
+            logger.info("Metrics job %s: derived %d accounts from live pull (no review file uploaded)",
+                        job_id, len(accounts))
 
-        _set_job(job_id, message="Pulling collections notes and emails from NetSuite…")
+            # Diagnostic logs (live pull path only)
+            fc_nonzero = [(a.collect_as, a.raw_balances.get("Finance Charges", 0.0))
+                          for a in accounts if a.raw_balances.get("Finance Charges", 0.0) > 0.01]
+            logger.info("Metrics job %s: %d accounts have non-zero FC; sample: %s",
+                        job_id, len(fc_nonzero), fc_nonzero[:5])
+            dso_sample = [(a.collect_as[:30], round(a.oldest_dso or 0))
+                          for a in accounts if a.oldest_dso is not None][:5]
+            logger.info("Metrics job %s: DSO sample (from due date): %s", job_id, dso_sample)
+
+        _set_job(job_id, status="running", message="Pulling collections notes and emails from NetSuite…")
         notes, messages = pull_metrics_data(month, year, progress_cb=progress)
-
-        # Diagnostic: log FC totals so we can verify raw_balances is populated
-        fc_nonzero = [(a.collect_as, a.raw_balances.get("Finance Charges", 0.0))
-                      for a in accounts if a.raw_balances.get("Finance Charges", 0.0) > 0.01]
-        logger.info("Metrics job %s: %d accounts have non-zero FC; sample: %s",
-                    job_id, len(fc_nonzero), fc_nonzero[:5])
-        # Diagnostic: log DSO sample to verify due_date is being used
-        dso_sample = [(a.collect_as[:30], round(a.oldest_dso or 0))
-                      for a in accounts if a.oldest_dso is not None][:5]
-        logger.info("Metrics job %s: DSO sample (from due date): %s", job_id, dso_sample)
 
         _set_job(job_id, message="Building metrics report…")
         xlsx_bytes = build_metrics_workbook(
@@ -387,6 +502,15 @@ def metrics_start():
     month = int(request.form.get("month", datetime.date.today().month))
     year  = int(request.form.get("year",  datetime.date.today().year))
 
+    review_accounts = None
+    rv_file = request.files.get("review_file")
+    if rv_file:
+        review_accounts = _parse_review_xlsx(rv_file.read())
+        if review_accounts is None:
+            logger.warning("review XLSX upload could not be parsed — will re-derive from live data")
+        else:
+            logger.info("review XLSX: %d accounts loaded", len(review_accounts))
+
     letterstream_ids: set[str] = set()
     ls_file = request.files.get("letterstream_file")
     if ls_file:
@@ -397,7 +521,7 @@ def metrics_start():
     _set_job(job_id, status="pending", month=month, year=year)
     t = threading.Thread(
         target=_run_metrics_job,
-        args=(job_id, month, year, letterstream_ids),
+        args=(job_id, month, year, letterstream_ids, review_accounts),
         daemon=True,
     )
     t.start()
