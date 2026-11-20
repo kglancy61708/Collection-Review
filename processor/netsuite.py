@@ -385,22 +385,36 @@ def diagnose() -> dict:
 
 def _build_collections_notes_query(month: int, year: int) -> str:
     """Collections Notes custom record (customrecord156) for a given month."""
+    # Use date range comparison instead of EXTRACT to avoid type issues
+    import datetime as _dt
+    start = _dt.date(year, month, 1).strftime("'%m/%d/%Y'")
+    if month == 12:
+        end = _dt.date(year + 1, 1, 1).strftime("'%m/%d/%Y'")
+    else:
+        end = _dt.date(year, month + 1, 1).strftime("'%m/%d/%Y'")
     return f"""
 SELECT
-  BUILTIN.DF(cr.custrecord1712)                        AS "Customer",
-  BUILTIN.DF(cr.custrecord1713)                        AS "Employee",
-  BUILTIN.DF(cr.custrecord1715)                        AS "Type",
-  TO_CHAR(cr.custrecord3576, 'MM/DD/YYYY HH24:MI:SS') AS "Date Created",
-  cr.custrecord1718                                     AS "Note"
+  BUILTIN.DF(cr.custrecord1712)              AS "Customer",
+  BUILTIN.DF(cr.custrecord1713)              AS "Employee",
+  BUILTIN.DF(cr.custrecord1715)              AS "Type",
+  TO_CHAR(cr.custrecord3576, 'MM/DD/YYYY')  AS "Date Created",
+  cr.custrecord1718                          AS "Note"
 FROM customrecord156 cr
-WHERE EXTRACT(MONTH FROM cr.custrecord3576) = {month}
-  AND EXTRACT(YEAR  FROM cr.custrecord3576) = {year}
+WHERE cr.custrecord3576 >= TO_DATE({start}, 'MM/DD/YYYY')
+  AND cr.custrecord3576 <  TO_DATE({end},   'MM/DD/YYYY')
 ORDER BY cr.custrecord3576
 """
 
 
 def _build_messages_query(month: int, year: int) -> str:
     """Outbound NetSuite emails (Message entity) sent by collections reps for a given month."""
+    import datetime as _dt
+    start = _dt.date(year, month, 1).strftime("'%m/%d/%Y'")
+    if month == 12:
+        end = _dt.date(year + 1, 1, 1).strftime("'%m/%d/%Y'")
+    else:
+        end = _dt.date(year, month + 1, 1).strftime("'%m/%d/%Y'")
+    # Note: 'incoming' is 'T'/'F' in SuiteQL; author stores display name string
     return f"""
 SELECT
   BUILTIN.DF(m.entity) AS "Customer",
@@ -408,10 +422,9 @@ SELECT
   TO_CHAR(m.messagedate, 'MM/DD/YYYY') AS "Date",
   m.subject             AS "Subject"
 FROM message m
-WHERE EXTRACT(MONTH FROM m.messagedate) = {month}
-  AND EXTRACT(YEAR  FROM m.messagedate) = {year}
-  AND m.incoming = 'F'
-  AND m.author IN ('Quilantan, Maria', 'Rosas, Yoniva')
+WHERE m.messagedate >= TO_DATE({start}, 'MM/DD/YYYY')
+  AND m.messagedate <  TO_DATE({end},   'MM/DD/YYYY')
+  AND (m.incoming = 'F' OR m.incoming IS NULL)
 ORDER BY m.messagedate
 """
 
@@ -461,10 +474,19 @@ def pull_metrics_data(
             "NS_TOKEN_SECRET as environment variables."
         )
 
-    raw_notes    = _run_query(_build_collections_notes_query(month, year),
-                              f"collections notes {month}/{year}", progress_cb=progress_cb)
-    raw_messages = _run_query(_build_messages_query(month, year),
-                              f"messages {month}/{year}", progress_cb=progress_cb)
+    try:
+        raw_notes = _run_query(_build_collections_notes_query(month, year),
+                               f"collections notes {month}/{year}", progress_cb=progress_cb)
+    except RuntimeError as e:
+        logger.error("Collections notes query failed: %s", e)
+        raise RuntimeError(f"Collections Notes query failed: {e}")
+
+    try:
+        raw_messages = _run_query(_build_messages_query(month, year),
+                                  f"messages {month}/{year}", progress_cb=progress_cb)
+    except RuntimeError as e:
+        logger.error("Messages query failed: %s", e)
+        raise RuntimeError(f"Messages (email) query failed: {e}")
 
     notes    = _normalise_note_rows(raw_notes)
     messages = _normalise_message_rows(raw_messages)
