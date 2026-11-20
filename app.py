@@ -358,15 +358,17 @@ def _parse_review_xlsx(raw_bytes: bytes) -> list | None:
             return None
 
         def col_idx(name: str) -> int | None:
+            # Exact match first
             try:
                 return headers.index(name)
             except ValueError:
-                # Try partial / case-insensitive match for "Suggested Status" which
-                # the writer suffixes with the month name
-                name_lower = name.lower()
-                for j, h in enumerate(headers):
-                    if h.lower().startswith(name_lower):
-                        return j
+                pass
+            # Case-insensitive substring match — handles "Suggested November 2026 Status"
+            # (writer format) as well as other minor variations
+            name_lower = name.lower()
+            for j, h in enumerate(headers):
+                if name_lower in h.lower():
+                    return j
             return None
 
         ci_ca    = col_idx("Collect As")

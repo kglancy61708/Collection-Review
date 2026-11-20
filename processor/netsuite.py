@@ -394,14 +394,20 @@ def _build_collections_notes_query(month: int, year: int) -> str:
         end = _dt.date(year + 1, 1, 1).strftime("'%m/%d/%Y'")
     else:
         end = _dt.date(year, month + 1, 1).strftime("'%m/%d/%Y'")
+    # Join customer on the customer lookup field (custrecord1712) so we get
+    # altname : entityid — same format as invoices — for reliable account ID extraction.
     return f"""
 SELECT
-  BUILTIN.DF(cr.custrecord1712)              AS "Customer",
+  CASE WHEN c.id IS NOT NULL
+       THEN c.altname || ' : ' || c.entityid
+       ELSE BUILTIN.DF(cr.custrecord1712)
+  END                                        AS "Customer",
   BUILTIN.DF(cr.custrecord1713)              AS "Employee",
   BUILTIN.DF(cr.custrecord1715)              AS "Type",
   TO_CHAR(cr.custrecord3576, 'MM/DD/YYYY')  AS "Date Created",
   cr.custrecord1718                          AS "Note"
 FROM customrecord156 cr
+LEFT JOIN customer c ON cr.custrecord1712 = c.id
 WHERE cr.custrecord3576 >= TO_DATE({start}, 'MM/DD/YYYY')
   AND cr.custrecord3576 <  TO_DATE({end},   'MM/DD/YYYY')
 ORDER BY cr.custrecord3576
@@ -416,14 +422,19 @@ def _build_messages_query(month: int, year: int) -> str:
         end = _dt.date(year + 1, 1, 1).strftime("'%m/%d/%Y'")
     else:
         end = _dt.date(year, month + 1, 1).strftime("'%m/%d/%Y'")
-    # Note: 'incoming' is 'T'/'F' in SuiteQL; author stores display name string
+    # Join customer to get altname : entityid so account IDs can be extracted.
+    # LEFT JOIN so messages to non-customer entities are still returned (entity null = no match).
     return f"""
 SELECT
-  BUILTIN.DF(m.entity) AS "Customer",
+  CASE WHEN c.id IS NOT NULL
+       THEN c.altname || ' : ' || c.entityid
+       ELSE BUILTIN.DF(m.entity)
+  END                   AS "Customer",
   m.author              AS "Author",
   TO_CHAR(m.messagedate, 'MM/DD/YYYY') AS "Date",
   m.subject             AS "Subject"
 FROM message m
+LEFT JOIN customer c ON m.entity = c.id
 WHERE m.messagedate >= TO_DATE({start}, 'MM/DD/YYYY')
   AND m.messagedate <  TO_DATE({end},   'MM/DD/YYYY')
   AND (m.incoming = 'F' OR m.incoming IS NULL)
