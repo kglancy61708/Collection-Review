@@ -334,23 +334,27 @@ def _parse_review_xlsx(raw_bytes: bytes) -> list | None:
     try:
         import openpyxl as _xl
         wb = _xl.load_workbook(_io.BytesIO(raw_bytes), read_only=True, data_only=True)
-        # First sheet = the main review sheet
-        ws = wb.worksheets[0]
-        rows = list(ws.rows)
-        if not rows:
-            return None
 
-        # Find header row (first row whose cells contain "Collect As")
+        # Scan all sheets for the one containing "Collect As" — the file may have
+        # a manually-added summary sheet before the main data sheet.
         header_idx = None
         headers: list[str] = []
-        for i, row in enumerate(rows):
-            vals = [str(c.value or "").strip() for c in row]
-            if "Collect As" in vals:
-                header_idx = i
-                headers = vals
+        rows = []
+        for ws in wb.worksheets:
+            sheet_rows = list(ws.rows)
+            for i, row in enumerate(sheet_rows):
+                vals = [str(c.value or "").strip() for c in row]
+                if "Collect As" in vals:
+                    header_idx = i
+                    headers = vals
+                    rows = sheet_rows
+                    break
+            if header_idx is not None:
+                logger.info("review XLSX: found 'Collect As' header in sheet '%s'", ws.title)
                 break
+
         if header_idx is None:
-            logger.warning("review XLSX: could not find 'Collect As' header row")
+            logger.warning("review XLSX: could not find 'Collect As' header row in any sheet")
             return None
 
         def col_idx(name: str) -> int | None:
