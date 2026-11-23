@@ -152,6 +152,20 @@ def diagnose_emails():
     except Exception as e:
         tests["distinct_incoming_values"] = {"error": str(e)}
 
+    # 6. Saved search 7659 — sample 10 rows to see column names and values
+    try:
+        r = _suiteql_request("SELECT * FROM (SAVEDSEARCH '7659') WHERE ROWNUM <= 10", offset=0)
+        tests["savedsearch_7659_sample"] = r.get("items", [])
+    except Exception as e:
+        tests["savedsearch_7659_sample"] = {"error": str(e)}
+
+    # 7. Saved search 7659 total count
+    try:
+        r = _suiteql_request("SELECT COUNT(*) AS cnt FROM (SAVEDSEARCH '7659')", offset=0)
+        tests["savedsearch_7659_count"] = r.get("items", [])
+    except Exception as e:
+        tests["savedsearch_7659_count"] = {"error": str(e)}
+
     return jsonify({"month": month, "year": year, "tests": tests})
 
 

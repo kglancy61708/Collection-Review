@@ -424,8 +424,17 @@ ORDER BY cr.custrecord3576
 """
 
 
+# Saved search used for outbound email metrics (set to None to use message table instead)
+EMAILS_SAVED_SEARCH_ID = "7659"
+
+
+def _build_savedsearch_emails_query() -> str:
+    """Pull all rows from the configured email saved search."""
+    return f"SELECT * FROM (SAVEDSEARCH '{EMAILS_SAVED_SEARCH_ID}')"
+
+
 def _build_messages_query(month: int, year: int) -> str:
-    """Outbound NetSuite emails (Message entity) sent by collections reps for a given month."""
+    """Outbound NetSuite emails (Message entity) for a given month — message table fallback."""
     import datetime as _dt
     start = _dt.date(year, month, 1).strftime("'%m/%d/%Y'")
     if month == 12:
@@ -470,13 +479,18 @@ def _normalise_note_rows(rows: list[dict]) -> list[dict]:
 def _normalise_message_rows(rows: list[dict]) -> list[dict]:
     result = []
     for row in rows:
-        def g(key: str) -> str:
-            v = row.get(key) or row.get(key.lower()) or ""
-            return str(v).strip() if v is not None else ""
+        # Try multiple possible column name spellings (message table vs saved search columns)
+        def g(*keys: str) -> str:
+            for k in keys:
+                v = row.get(k) or row.get(k.lower()) or row.get(k.upper()) or ""
+                if v is not None and str(v).strip():
+                    return str(v).strip()
+            return ""
+
         result.append({
-            "customer": g("Customer"),
-            "author":   g("Author"),
-            "date":     g("Date"),
+            "customer": g("Customer", "Name", "Company", "Entity", "entity_display"),
+            "author":   g("Author", "From", "Sender"),
+            "date":     g("Date", "messagedate"),
             "subject":  g("Subject"),
         })
     return result
@@ -503,14 +517,31 @@ def pull_metrics_data(
         logger.error("Collections notes query failed: %s", e)
         raise RuntimeError(f"Collections Notes query failed: {e}")
 
-    try:
-        raw_messages = _run_query(_build_messages_query(month, year),
-                                  f"messages {month}/{year}", progress_cb=progress_cb)
-    except RuntimeError as e:
-        logger.error("Messages query failed: %s", e)
-        raise RuntimeError(f"Messages (email) query failed: {e}")
+    # Try saved search first; fall back to message table query
+    raw_messages = []
+    if EMAILS_SAVED_SEARCH_ID:
+        try:
+            raw_messages = _run_query(_build_savedsearch_emails_query(),
+                                      f"emails saved search {EMAILS_SAVED_SEARCH_ID}",
+                                      progress_cb=progress_cb)
+            logger.info("Email pull: saved search %s returned %d rows",
+                        EMAILS_SAVED_SEARCH_ID, len(raw_messages))
+        except RuntimeError as e:
+            logger.warning("Saved search %s failed (%s), falling back to message table",
+                           EMAILS_SAVED_SEARCH_ID, e)
+            raw_messages = []
+
+    if not raw_messages:
+        try:
+            raw_messages = _run_query(_build_messages_query(month, year),
+                                      f"messages {month}/{year}", progress_cb=progress_cb)
+            logger.info("Email pull: message table returned %d rows", len(raw_messages))
+        except RuntimeError as e:
+            logger.error("Messages query failed: %s", e)
+            raise RuntimeError(f"Messages (email) query failed: {e}")
 
     notes    = _normalise_note_rows(raw_notes)
+    # Saved search rows may have different column names — normalise flexibly
     messages = _normalise_message_rows(raw_messages)
     logger.info("Metrics pull: %d notes, %d messages for %d/%d",
                 len(notes), len(messages), month, year)
