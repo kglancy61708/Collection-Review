@@ -83,6 +83,78 @@ def diagnose():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/diagnose-emails")
+def diagnose_emails():
+    """
+    Diagnose the message (email) pull for the current month.
+    Returns raw sample rows and counts directly as JSON — no Railway log access needed.
+    Visit /diagnose-emails?month=11&year=2026 in a browser after deploy.
+    """
+    from processor.netsuite import _suiteql_request
+    import datetime as _dt
+    month = int(request.args.get("month", datetime.date.today().month))
+    year  = int(request.args.get("year",  datetime.date.today().year))
+    start = _dt.date(year, month, 1).strftime("'%m/%d/%Y'")
+    end_d = _dt.date(year, month + 1, 1) if month < 12 else _dt.date(year + 1, 1, 1)
+    end   = end_d.strftime("'%m/%d/%Y'")
+
+    tests = {}
+
+    # 1. Total rows in message table accessible to this role
+    try:
+        r = _suiteql_request("SELECT COUNT(*) AS cnt FROM message", offset=0)
+        tests["total_messages_in_table"] = r.get("items", [])
+    except Exception as e:
+        tests["total_messages_in_table"] = {"error": str(e)}
+
+    # 2. Count for the month (no other filters)
+    try:
+        q = f"""SELECT COUNT(*) AS cnt FROM message m
+                WHERE m.messagedate >= TO_DATE({start}, 'MM/DD/YYYY')
+                  AND m.messagedate <  TO_DATE({end}, 'MM/DD/YYYY')"""
+        r = _suiteql_request(q, offset=0)
+        tests["messages_this_month"] = r.get("items", [])
+    except Exception as e:
+        tests["messages_this_month"] = {"error": str(e)}
+
+    # 3. Sample 10 rows — customer, author, date, incoming field value
+    try:
+        q = f"""SELECT m.author, m.messagedate, m.incoming, m.subject,
+                       BUILTIN.DF(m.entity) AS entity_display
+                FROM message m
+                WHERE m.messagedate >= TO_DATE({start}, 'MM/DD/YYYY')
+                  AND m.messagedate <  TO_DATE({end}, 'MM/DD/YYYY')
+                  AND ROWNUM <= 10
+                ORDER BY m.messagedate"""
+        r = _suiteql_request(q, offset=0)
+        tests["sample_rows"] = r.get("items", [])
+    except Exception as e:
+        tests["sample_rows"] = {"error": str(e)}
+
+    # 4. Count with incoming = 'F' filter
+    try:
+        q = f"""SELECT COUNT(*) AS cnt FROM message m
+                WHERE m.messagedate >= TO_DATE({start}, 'MM/DD/YYYY')
+                  AND m.messagedate <  TO_DATE({end}, 'MM/DD/YYYY')
+                  AND m.incoming = 'F'"""
+        r = _suiteql_request(q, offset=0)
+        tests["count_incoming_eq_F"] = r.get("items", [])
+    except Exception as e:
+        tests["count_incoming_eq_F"] = {"error": str(e)}
+
+    # 5. Distinct incoming values this month
+    try:
+        q = f"""SELECT DISTINCT m.incoming FROM message m
+                WHERE m.messagedate >= TO_DATE({start}, 'MM/DD/YYYY')
+                  AND m.messagedate <  TO_DATE({end}, 'MM/DD/YYYY')"""
+        r = _suiteql_request(q, offset=0)
+        tests["distinct_incoming_values"] = r.get("items", [])
+    except Exception as e:
+        tests["distinct_incoming_values"] = {"error": str(e)}
+
+    return jsonify({"month": month, "year": year, "tests": tests})
+
+
 # ---------------------------------------------------------------------------
 # Async pull endpoints
 # ---------------------------------------------------------------------------

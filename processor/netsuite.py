@@ -447,7 +447,6 @@ FROM message m
 LEFT JOIN customer c ON m.entity = c.id
 WHERE m.messagedate >= TO_DATE({start}, 'MM/DD/YYYY')
   AND m.messagedate <  TO_DATE({end},   'MM/DD/YYYY')
-  AND (m.incoming = 'F' OR m.incoming IS NULL)
 ORDER BY m.messagedate
 """
 
