@@ -152,19 +152,42 @@ def diagnose_emails():
     except Exception as e:
         tests["distinct_incoming_values"] = {"error": str(e)}
 
-    # 6. Saved search 7659 — sample 10 rows to see column names and values
+    # 6. Phone call / activity table — email-type activities this month
     try:
-        r = _suiteql_request("SELECT * FROM (SAVEDSEARCH '7659') WHERE ROWNUM <= 10", offset=0)
-        tests["savedsearch_7659_sample"] = r.get("items", [])
+        q = f"""SELECT COUNT(*) AS cnt FROM phonecall pc
+                WHERE pc.startdate >= TO_DATE({start}, 'MM/DD/YYYY')
+                  AND pc.startdate <  TO_DATE({end}, 'MM/DD/YYYY')"""
+        r = _suiteql_request(q, offset=0)
+        tests["phonecall_this_month"] = r.get("items", [])
     except Exception as e:
-        tests["savedsearch_7659_sample"] = {"error": str(e)}
+        tests["phonecall_this_month"] = {"error": str(e)}
 
-    # 7. Saved search 7659 total count
+    # 7. Sample phone call rows — see what activity types exist
     try:
-        r = _suiteql_request("SELECT COUNT(*) AS cnt FROM (SAVEDSEARCH '7659')", offset=0)
-        tests["savedsearch_7659_count"] = r.get("items", [])
+        q = f"""SELECT pc.title, pc.startdate, BUILTIN.DF(pc.assigned) AS rep,
+                       BUILTIN.DF(pc.company) AS company, pc.custevent_type AS activity_type
+                FROM phonecall pc
+                WHERE pc.startdate >= TO_DATE({start}, 'MM/DD/YYYY')
+                  AND pc.startdate <  TO_DATE({end}, 'MM/DD/YYYY')
+                  AND ROWNUM <= 10"""
+        r = _suiteql_request(q, offset=0)
+        tests["phonecall_sample"] = r.get("items", [])
     except Exception as e:
-        tests["savedsearch_7659_count"] = {"error": str(e)}
+        tests["phonecall_sample"] = {"error": str(e)}
+
+    # 8. Total message table rows with no date filter — are there ANY messages at all?
+    try:
+        r = _suiteql_request("SELECT COUNT(*) AS cnt FROM message WHERE ROWNUM <= 1", offset=0)
+        tests["message_any_rows"] = r.get("items", [])
+    except Exception as e:
+        tests["message_any_rows"] = {"error": str(e)}
+
+    # 9. Sample message rows with no date filter — see if any exist and what they look like
+    try:
+        r = _suiteql_request("SELECT m.author, m.messagedate, m.subject, BUILTIN.DF(m.entity) AS entity FROM message m WHERE ROWNUM <= 5", offset=0)
+        tests["message_sample_no_filter"] = r.get("items", [])
+    except Exception as e:
+        tests["message_sample_no_filter"] = {"error": str(e)}
 
     return jsonify({"month": month, "year": year, "tests": tests})
 
