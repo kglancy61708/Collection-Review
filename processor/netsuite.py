@@ -24,6 +24,7 @@ import time
 import urllib.parse
 import uuid
 
+import re
 import requests
 
 logger = logging.getLogger(__name__)
@@ -233,6 +234,45 @@ def _suiteql_request(query: str, offset: int = 0) -> dict:
         return result
 
     raise RuntimeError("NetSuite SuiteQL failed after 5 retries (rate limited).")
+
+
+def _call_restlet(script_id: str, deploy_id: str, params: dict) -> dict:
+    """
+    Call a NetSuite RESTlet via GET with OAuth TBA.
+    NS_RESTLET_SCRIPT_ID and NS_RESTLET_DEPLOY_ID must be set in env.
+    """
+    account_id = os.environ.get("NS_ACCOUNT_ID", "3412280")
+    base_url = (
+        f"https://{account_id}.restlets.api.netsuite.com"
+        f"/app/site/hosting/restlet.nl"
+    )
+    # All params (script, deploy, plus caller params) go in the query string
+    all_params = {"script": script_id, "deploy": deploy_id, **params}
+    query_string = urllib.parse.urlencode(all_params)
+    full_url = f"{base_url}?{query_string}"
+
+    auth = _build_auth_header("GET", base_url, query_params=all_params)
+    try:
+        resp = requests.get(
+            full_url,
+            headers={"Authorization": auth, "Accept": "application/json"},
+            timeout=(15, 90),
+        )
+    except requests.RequestException as e:
+        raise RuntimeError(f"Network error calling RESTlet: {e}")
+
+    if resp.status_code == 401:
+        raise RuntimeError(
+            "RESTlet returned 401 Unauthorized. Check NS credentials and that "
+            "the RESTlet deploy is set to Available Without Login = False, "
+            "Log In Required = True (TBA)."
+        )
+    if resp.status_code not in (200,):
+        body = resp.text[:1000]
+        logger.error("RESTlet HTTP %s — response: %s", resp.status_code, body)
+        raise RuntimeError(f"RESTlet returned HTTP {resp.status_code}: {body}")
+
+    return resp.json()
 
 
 # ---------------------------------------------------------------------------
@@ -487,11 +527,18 @@ def _normalise_message_rows(rows: list[dict]) -> list[dict]:
                     return str(v).strip()
             return ""
 
+        # entity_id from RESTlet is the raw NS internal ID; prefer customer (display name)
+        # but append entity_id if customer has no account-ID pattern
+        cust_val = g("customer", "Customer", "Name", "Company", "Entity", "entity_display")
+        eid_val  = g("entity_id")
+        # If display name lacks an account ID, append the entity_id so _acct_id() can extract it
+        if eid_val and not re.search(r'[0-9]{2}[A-Z]{2,5}[0-9]{2,5}', cust_val):
+            cust_val = f"{cust_val} : {eid_val}" if cust_val else eid_val
         result.append({
-            "customer": g("Customer", "Name", "Company", "Entity", "entity_display"),
-            "author":   g("Author", "From", "Sender"),
-            "date":     g("Date", "messagedate"),
-            "subject":  g("Subject"),
+            "customer": cust_val,
+            "author":   g("author", "Author", "From", "Sender"),
+            "date":     g("date",   "Date", "messagedate"),
+            "subject":  g("subject","Subject"),
         })
     return result
 
@@ -517,18 +564,21 @@ def pull_metrics_data(
         logger.error("Collections notes query failed: %s", e)
         raise RuntimeError(f"Collections Notes query failed: {e}")
 
-    # Try saved search first; fall back to message table query
+    # Try RESTlet first (bypasses SuiteQL row-level message restriction),
+    # then fall back to SuiteQL message table, then bare message table query.
     raw_messages = []
-    if EMAILS_SAVED_SEARCH_ID:
+    restlet_script = os.environ.get("NS_RESTLET_SCRIPT_ID", "")
+    restlet_deploy = os.environ.get("NS_RESTLET_DEPLOY_ID", "1")
+    if restlet_script:
         try:
-            raw_messages = _run_query(_build_savedsearch_emails_query(),
-                                      f"emails saved search {EMAILS_SAVED_SEARCH_ID}",
-                                      progress_cb=progress_cb)
-            logger.info("Email pull: saved search %s returned %d rows",
-                        EMAILS_SAVED_SEARCH_ID, len(raw_messages))
+            if progress_cb:
+                progress_cb("Pulling emails via RESTlet…")
+            result = _call_restlet(restlet_script, restlet_deploy,
+                                   {"month": str(month), "year": str(year)})
+            raw_messages = result.get("results", [])
+            logger.info("Email pull: RESTlet returned %d rows", len(raw_messages))
         except RuntimeError as e:
-            logger.warning("Saved search %s failed (%s), falling back to message table",
-                           EMAILS_SAVED_SEARCH_ID, e)
+            logger.warning("RESTlet failed (%s), falling back to message table", e)
             raw_messages = []
 
     if not raw_messages:
