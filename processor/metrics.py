@@ -108,15 +108,27 @@ def compute_metrics(
         if ntype == "Letter":
             letter_note_counts[rep][aid] = letter_note_counts[rep].get(aid, 0) + 1
 
-    # Email index: keyed by account ID only (not per-rep author) so emails count
-    # correctly even when m.author uses a shared mailbox or different name format.
-    email_counts_global: dict[str, int] = {}
+    # Email index: keyed by account ID only (not per-rep author).
+    # Primary key: extracted account ID pattern (e.g. "27AUG001").
+    # Fallback key: stripped company name in lowercase for when the customer
+    # field doesn't contain an entity ID (e.g. plain "ABC Company" from a saved search).
+    email_by_id:   dict[str, int] = {}
+    email_by_name: dict[str, int] = {}
     for m in messages:
         cust = m.get("customer", "").strip()
         aid  = _acct_id(cust)
-        if not aid:
-            continue
-        email_counts_global[aid] = email_counts_global.get(aid, 0) + 1
+        if aid:
+            email_by_id[aid] = email_by_id.get(aid, 0) + 1
+        elif cust:
+            # Strip trailing " : <id>" if present, normalise to lowercase
+            name_key = re.sub(r"\s*:\s*\S+\s*$", "", cust).strip().lower()
+            if name_key:
+                email_by_name[name_key] = email_by_name.get(name_key, 0) + 1
+
+    import logging as _logging
+    _logging.getLogger(__name__).info(
+        "Email index: %d by account-ID, %d by name-only", len(email_by_id), len(email_by_name)
+    )
 
     result: dict[str, list[dict]] = {}
 
@@ -133,9 +145,14 @@ def compute_metrics(
 
             creq, lreq = STATUS_GOALS.get(status, STATUS_GOALS.get(status_title, (2, None)))
 
-            # Attempt counts — look up by account ID
+            # Attempt counts — look up by account ID, with name fallback for emails
             nc    = phone_coll_counts[rep].get(aid, 0)      if aid else 0
-            ec    = email_counts_global.get(aid, 0)          if aid else 0
+            if aid:
+                ec = email_by_id.get(aid, 0)
+            else:
+                # Fallback: match by company name (lowercase) when no account ID extracted
+                name_key = re.sub(r"\s*:\s*\S+\s*$", "", cust or "").strip().lower()
+                ec = email_by_name.get(name_key, 0) if name_key else 0
             total = nc + ec
 
             # Letter evidence

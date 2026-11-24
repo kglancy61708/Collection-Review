@@ -543,6 +543,11 @@ def pull_metrics_data(
     notes    = _normalise_note_rows(raw_notes)
     # Saved search rows may have different column names — normalise flexibly
     messages = _normalise_message_rows(raw_messages)
+    # Log raw column names and first row to diagnose email matching issues
+    if raw_messages:
+        sample = raw_messages[0]
+        logger.info("Email raw columns: %s", list(sample.keys()))
+        logger.info("Email row[0] sample: %s", {k: str(v)[:60] for k, v in sample.items()})
     logger.info("Metrics pull: %d notes, %d messages for %d/%d",
                 len(notes), len(messages), month, year)
     return notes, messages
