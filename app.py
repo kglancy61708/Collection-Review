@@ -175,19 +175,44 @@ def diagnose_emails():
     except Exception as e:
         tests["phonecall_sample"] = {"error": str(e)}
 
-    # 8. Total message table rows with no date filter — are there ANY messages at all?
+    # 8. Try Records REST API for messages (different access controls than SuiteQL)
     try:
-        r = _suiteql_request("SELECT COUNT(*) AS cnt FROM message WHERE ROWNUM <= 1", offset=0)
-        tests["message_any_rows"] = r.get("items", [])
+        import os as _os
+        from processor.netsuite import _build_auth_header
+        account_id = _os.environ.get("NS_ACCOUNT_ID", "3412280")
+        start_iso  = _dt.date(year, month, 1).strftime("%Y-%m-%d")
+        end_iso    = end_d.strftime("%Y-%m-%d")
+        rest_url   = (
+            f"https://{account_id}.suitetalk.api.netsuite.com"
+            f"/services/rest/record/v1/message"
+            f"?q=messagedate+AFTER+%22{start_iso}%22+AND+messagedate+BEFORE+%22{end_iso}%22"
+            f"&limit=5"
+        )
+        auth = _build_auth_header("GET", rest_url.split("?")[0])
+        resp = requests.get(rest_url, headers={"Authorization": auth, "Accept": "application/json"})
+        tests["records_api_messages"] = {"status": resp.status_code, "body": resp.json() if resp.content else {}}
     except Exception as e:
-        tests["message_any_rows"] = {"error": str(e)}
+        tests["records_api_messages"] = {"error": str(e)}
 
-    # 9. Sample message rows with no date filter — see if any exist and what they look like
+    # 9. Try activity table in SuiteQL
     try:
-        r = _suiteql_request("SELECT m.author, m.messagedate, m.subject, BUILTIN.DF(m.entity) AS entity FROM message m WHERE ROWNUM <= 5", offset=0)
-        tests["message_sample_no_filter"] = r.get("items", [])
+        q = f"""SELECT COUNT(*) AS cnt FROM activity
+                WHERE activitydate >= TO_DATE({start}, 'MM/DD/YYYY')
+                  AND activitydate <  TO_DATE({end}, 'MM/DD/YYYY')"""
+        r = _suiteql_request(q, offset=0)
+        tests["activity_this_month"] = r.get("items", [])
     except Exception as e:
-        tests["message_sample_no_filter"] = {"error": str(e)}
+        tests["activity_this_month"] = {"error": str(e)}
+
+    # 10. Try task table
+    try:
+        q = f"""SELECT COUNT(*) AS cnt FROM task
+                WHERE startdate >= TO_DATE({start}, 'MM/DD/YYYY')
+                  AND startdate <  TO_DATE({end}, 'MM/DD/YYYY')"""
+        r = _suiteql_request(q, offset=0)
+        tests["task_this_month"] = r.get("items", [])
+    except Exception as e:
+        tests["task_this_month"] = {"error": str(e)}
 
     return jsonify({"month": month, "year": year, "tests": tests})
 
