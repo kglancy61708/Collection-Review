@@ -13,6 +13,7 @@ import uuid
 from flask import Flask, jsonify, render_template, request, send_file
 
 import csv
+import requests
 
 from processor.logic import process_collections
 from processor.netsuite import pull_netsuite_data, pull_metrics_data, check_credentials
@@ -194,25 +195,22 @@ def diagnose_emails():
     except Exception as e:
         tests["records_api_messages"] = {"error": str(e)}
 
-    # 9. Try activity table in SuiteQL
+    # 9. Activity table — sample rows to discover column names
     try:
-        q = f"""SELECT COUNT(*) AS cnt FROM activity
-                WHERE activitydate >= TO_DATE({start}, 'MM/DD/YYYY')
-                  AND activitydate <  TO_DATE({end}, 'MM/DD/YYYY')"""
-        r = _suiteql_request(q, offset=0)
-        tests["activity_this_month"] = r.get("items", [])
+        r = _suiteql_request("SELECT * FROM activity WHERE ROWNUM <= 3", offset=0)
+        tests["activity_sample"] = r.get("items", [])
     except Exception as e:
-        tests["activity_this_month"] = {"error": str(e)}
+        tests["activity_sample"] = {"error": str(e)}
 
-    # 10. Try task table
+    # 10. Activity count this month using 'date' column (common name)
     try:
-        q = f"""SELECT COUNT(*) AS cnt FROM task
-                WHERE startdate >= TO_DATE({start}, 'MM/DD/YYYY')
-                  AND startdate <  TO_DATE({end}, 'MM/DD/YYYY')"""
+        q = f"""SELECT COUNT(*) AS cnt FROM activity a
+                WHERE a.date >= TO_DATE({start}, 'MM/DD/YYYY')
+                  AND a.date <  TO_DATE({end}, 'MM/DD/YYYY')"""
         r = _suiteql_request(q, offset=0)
-        tests["task_this_month"] = r.get("items", [])
+        tests["activity_this_month_by_date"] = r.get("items", [])
     except Exception as e:
-        tests["task_this_month"] = {"error": str(e)}
+        tests["activity_this_month_by_date"] = {"error": str(e)}
 
     return jsonify({"month": month, "year": year, "tests": tests})
 
