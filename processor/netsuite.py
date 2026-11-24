@@ -272,7 +272,16 @@ def _call_restlet(script_id: str, deploy_id: str, params: dict) -> dict:
         logger.error("RESTlet HTTP %s — response: %s", resp.status_code, body)
         raise RuntimeError(f"RESTlet returned HTTP {resp.status_code}: {body}")
 
-    return resp.json()
+    # RESTlet may return a JSON string (when output type = text/plain) or a JSON object
+    import json as _json
+    text = resp.text.strip()
+    if text.startswith('"') and text.endswith('"'):
+        # Double-encoded: NetSuite wrapped the JSON.stringify result in quotes
+        text = _json.loads(text)
+    try:
+        return _json.loads(text) if isinstance(text, str) else text
+    except _json.JSONDecodeError:
+        raise RuntimeError(f"RESTlet returned non-JSON: {text[:500]}")
 
 
 # ---------------------------------------------------------------------------

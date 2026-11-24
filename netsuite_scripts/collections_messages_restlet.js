@@ -69,11 +69,11 @@ define(['N/search', 'N/log'], function (search, log) {
 
             log.debug({ title: 'collections_messages', details: 'Returned ' + results.length + ' rows for ' + month + '/' + year });
 
-            return { count: results.length, month: month, year: year, results: results };
+            return JSON.stringify({ count: results.length, month: month, year: year, results: results });
 
         } catch (e) {
             log.error({ title: 'collections_messages error', details: e.message });
-            return { error: e.message, count: 0, results: [] };
+            return JSON.stringify({ error: e.message, count: 0, results: [] });
         }
     }
 
