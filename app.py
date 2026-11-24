@@ -212,6 +212,26 @@ def diagnose_emails():
     except Exception as e:
         tests["activity_this_month_by_date"] = {"error": str(e)}
 
+    # 11. RESTlet test — call customscript4417 directly
+    try:
+        import os as _os2
+        from processor.netsuite import _call_restlet
+        script_id = _os2.environ.get("NS_RESTLET_SCRIPT_ID", "")
+        deploy_id = _os2.environ.get("NS_RESTLET_DEPLOY_ID", "1")
+        if not script_id:
+            tests["restlet"] = {"error": "NS_RESTLET_SCRIPT_ID env var not set"}
+        else:
+            result = _call_restlet(script_id, deploy_id, {"month": str(month), "year": str(year)})
+            # Return count + first 3 rows so we can see field names
+            tests["restlet"] = {
+                "script_id": script_id,
+                "count": result.get("count", "?"),
+                "sample": result.get("results", [])[:3],
+                "raw_keys": list(result.get("results", [{}])[0].keys()) if result.get("results") else []
+            }
+    except Exception as e:
+        tests["restlet"] = {"error": str(e)}
+
     return jsonify({"month": month, "year": year, "tests": tests})
 
 
